@@ -121,20 +121,20 @@ void ecs_os_gettime(ecs_time_t *time)
 static
 void* ecs_os_api_malloc(ecs_size_t size) {
     ecs_os_api_malloc_count ++;
-    ecs_assert(size > 0, ECS_INVALID_PARAMETER, NULL);
+    ecs_assert(size > 0, ECS_INVALID_PARAMETER);
     return malloc((size_t)size);
 }
 
 static
 void* ecs_os_api_calloc(ecs_size_t size) {
     ecs_os_api_calloc_count ++;
-    ecs_assert(size > 0, ECS_INVALID_PARAMETER, NULL);
+    ecs_assert(size > 0, ECS_INVALID_PARAMETER);
     return calloc(1, (size_t)size);
 }
 
 static
 void* ecs_os_api_realloc(void *ptr, ecs_size_t size) {
-    ecs_assert(size > 0, ECS_INVALID_PARAMETER, NULL);
+    ecs_assert(size > 0, ECS_INVALID_PARAMETER);
 
     if (ptr) {
         ecs_os_api_realloc_count ++;
@@ -158,63 +158,21 @@ static
 char* ecs_os_api_strdup(const char *str) {
     int len = ecs_os_strlen(str);
     char *result = ecs_os_malloc(len + 1);
-    ecs_assert(result != NULL, ECS_OUT_OF_MEMORY, NULL);
+    ecs_assert(result != NULL, ECS_OUT_OF_MEMORY);
     ecs_os_strcpy(result, str);
     return result;
 }
 
-/* Replace dots with underscores */
-static
-char *module_file_base(const char *module, char sep) {
-    char *base = ecs_os_strdup(module);
-    ecs_size_t i, len = ecs_os_strlen(base);
-    for (i = 0; i < len; i ++) {
-        if (base[i] == '.') {
-            base[i] = sep;
-        }
-    }
-
-    return base;
-}
-
 static
 char* ecs_os_api_module_to_dl(const char *module) {
-    ecs_strbuf_t lib = ECS_STRBUF_INIT;
-
-    /* Best guess, use module name with underscores + OS library extension */
-    char *file_base = module_file_base(module, '_');
-
-#if defined(ECS_OS_LINUX)
-    ecs_strbuf_appendstr(&lib, "lib");
-    ecs_strbuf_appendstr(&lib, file_base);
-    ecs_strbuf_appendstr(&lib, ".so");
-#elif defined(ECS_OS_DARWIN)
-    ecs_strbuf_appendstr(&lib, "lib");
-    ecs_strbuf_appendstr(&lib, file_base);
-    ecs_strbuf_appendstr(&lib, ".dylib");
-#elif defined(ECS_OS_WINDOWS)
-    ecs_strbuf_appendstr(&lib, file_base);
-    ecs_strbuf_appendstr(&lib, ".dll");
-#endif
-
-    ecs_os_free(file_base);
-
-    return ecs_strbuf_get(&lib);
+    (void)module;
+    return NULL;
 }
 
 static
 char* ecs_os_api_module_to_etc(const char *module) {
-    ecs_strbuf_t lib = ECS_STRBUF_INIT;
-
-    /* Best guess, use module name with dashes + /etc */
-    char *file_base = module_file_base(module, '-');
-
-    ecs_strbuf_appendstr(&lib, file_base);
-    ecs_strbuf_appendstr(&lib, "/etc");
-
-    ecs_os_free(file_base);
-
-    return ecs_strbuf_get(&lib);
+    (void)module;
+    return NULL;
 }
 
 void ecs_os_set_api_defaults(void)

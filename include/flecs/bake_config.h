@@ -23,16 +23,16 @@
 /* Convenience macro for exporting symbols */
 #ifndef flecs_STATIC
 #if flecs_EXPORTS && (defined(_MSC_VER) || defined(__MINGW32__))
-  #define FLECS_EXPORT __declspec(dllexport)
+  #define FLECS_API __declspec(dllexport)
 #elif flecs_EXPORTS
-  #define FLECS_EXPORT __attribute__((__visibility__("default")))
+  #define FLECS_API __attribute__((__visibility__("default")))
 #elif defined _MSC_VER
-  #define FLECS_EXPORT __declspec(dllimport)
+  #define FLECS_API __declspec(dllimport)
 #else
-  #define FLECS_EXPORT
+  #define FLECS_API
 #endif
 #else
-  #define FLECS_EXPORT
+  #define FLECS_API
 #endif
 
 #endif

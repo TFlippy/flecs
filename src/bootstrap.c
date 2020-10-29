@@ -1,50 +1,44 @@
 #include "private_api.h"
 
-/* Global type variables */
-ecs_type_t ecs_type(EcsComponent);
-ecs_type_t ecs_type(EcsType);
-ecs_type_t ecs_type(EcsName);
-ecs_type_t ecs_type(EcsPrefab);
-
 /* Component lifecycle actions for EcsName */
-ECS_CTOR(EcsName, ptr, {
-    ptr->value = NULL;
-    ptr->alloc_value = NULL;
-    ptr->symbol = NULL;
-})
+void EcsName_ctor(EcsName *ptr, size_t size, int32_t count) {
+    memset(ptr, 0, size * ecs_to_size_t(count));
+}
 
-ECS_DTOR(EcsName, ptr, {
-    ecs_os_free(ptr->alloc_value);
-    ptr->value = NULL;
-    ptr->alloc_value = NULL;
-    ptr->symbol = NULL;
-})
+void EcsName_dtor(EcsName *ptr, size_t size, int32_t count) {
+    (void)size;
 
-ECS_COPY(EcsName, dst, src, {
-    if (dst->alloc_value) {
-        ecs_os_free(dst->alloc_value);
-        dst->alloc_value = NULL;
+    int32_t i;
+    for (i = 0; i < count; i ++) {
+        ecs_os_free(ptr[i].alloc_value);
     }
+}
+
+void EcsName_copy(EcsName *dst, const EcsName *src, size_t size, int32_t count) {
+    (void)size;
     
-    if (src->alloc_value) {
-        dst->alloc_value = ecs_os_strdup(src->alloc_value);
-        dst->value = dst->alloc_value;
-    } else {
-        dst->alloc_value = NULL;
-        dst->value = src->value;
+    int32_t i;
+    for (i = 0; i < count; i ++) {
+        if (dst[i].alloc_value) {
+            ecs_os_free(dst[i].alloc_value);
+            dst[i].alloc_value = NULL;
+        }
+        
+        if (src[i].alloc_value) {
+            dst[i].alloc_value = ecs_os_strdup(src[i].alloc_value);
+            dst[i].value = dst[i].alloc_value;
+        } else {
+            dst[i].alloc_value = NULL;
+            dst[i].value = src[i].value;
+        }
+        dst[i].symbol = src[i].symbol;
     }
-    dst->symbol = src->symbol;
-})
+}
 
-ECS_MOVE(EcsName, dst, src, {
-    dst->value = src->value;
-    dst->alloc_value = src->alloc_value;
-    dst->symbol = src->symbol;
-
-    src->value = NULL;
-    src->alloc_value = NULL;
-    src->symbol = NULL;
-})
+void EcsName_move(EcsName *dst, EcsName *src, size_t size, int32_t count) {
+    memcpy(dst, src, size * ecs_to_size_t(count));
+    memset(src, 0, size * ecs_to_size_t(count));
+}
 
 
 /* -- Bootstrapping -- */
@@ -61,13 +55,13 @@ void _bootstrap_component(
     ecs_size_t size,
     ecs_size_t alignment)
 {
-    ecs_assert(table != NULL, ECS_INTERNAL_ERROR, NULL);
+    ecs_assert(table != NULL, ECS_INTERNAL_ERROR);
 
     ecs_data_t *data = ecs_table_get_or_create_data(table);
-    ecs_assert(data != NULL, ECS_INTERNAL_ERROR, NULL);
+    ecs_assert(data != NULL, ECS_INTERNAL_ERROR);
 
     ecs_column_t *columns = data->columns;
-    ecs_assert(columns != NULL, ECS_INTERNAL_ERROR, NULL);
+    ecs_assert(columns != NULL, ECS_INTERNAL_ERROR);
 
     /* Create record in entity index */
     ecs_record_t *record = ecs_eis_get_or_create(world, entity);
@@ -98,20 +92,10 @@ ecs_type_t ecs_bootstrap_type(
         .count = 1
     });
 
-    ecs_assert(table != NULL, ECS_INTERNAL_ERROR, NULL);
-    ecs_assert(table->type != NULL, ECS_INTERNAL_ERROR, NULL);
+    ecs_assert(table != NULL, ECS_INTERNAL_ERROR);
+    ecs_assert(table->type != NULL, ECS_INTERNAL_ERROR);
 
     return table->type;
-}
-
-/** Bootstrap types for builtin components and tags */
-static
-void bootstrap_types(
-    ecs_world_t *world)
-{
-    ecs_type(EcsComponent) = ecs_bootstrap_type(world, ecs_typeid(EcsComponent));
-    ecs_type(EcsType) = ecs_bootstrap_type(world, ecs_typeid(EcsType));
-    ecs_type(EcsName) = ecs_bootstrap_type(world, ecs_typeid(EcsName));
 }
 
 /** Initialize component table. This table is manually constructed to bootstrap
@@ -124,7 +108,7 @@ static
 ecs_table_t* bootstrap_component_table(
     ecs_world_t *world)
 {
-    ecs_entity_t entities[] = {ecs_typeid(EcsComponent), ecs_typeid(EcsName), ECS_CHILDOF | EcsFlecsCore};
+    ecs_entity_t entities[] = {ecs_typeid(EcsComponent), ecs_typeid(EcsName), ecs_role(EcsScope, EcsFlecsCore)};
     ecs_entities_t array = {
         .array = entities,
         .count = 3
@@ -138,7 +122,7 @@ ecs_table_t* bootstrap_component_table(
     data->record_ptrs = ecs_vector_new(ecs_record_t*, EcsFirstUserComponentId);
 
     data->columns = ecs_os_malloc(sizeof(ecs_column_t) * 2);
-    ecs_assert(data->columns != NULL, ECS_OUT_OF_MEMORY, NULL);
+    ecs_assert(data->columns != NULL, ECS_OUT_OF_MEMORY);
 
     data->columns[0].data = ecs_vector_new(EcsComponent, EcsFirstUserComponentId);
     data->columns[0].size = sizeof(EcsComponent);
@@ -155,8 +139,6 @@ ecs_table_t* bootstrap_component_table(
 void ecs_bootstrap(
     ecs_world_t *world)
 {
-    ecs_type(EcsComponent) = NULL;
-
     ecs_trace_1("bootstrap core components");
     ecs_log_push();
 
@@ -165,54 +147,31 @@ void ecs_bootstrap(
     assert(table != NULL);
 
     bootstrap_component(world, table, EcsComponent);
-    bootstrap_component(world, table, EcsType);
     bootstrap_component(world, table, EcsName);
 
     world->stats.last_component_id = EcsFirstUserComponentId;
     world->stats.last_id = EcsFirstUserEntityId;
-    world->stats.min_id = 0;
-    world->stats.max_id = 0;
-
-    bootstrap_types(world);
 
     ecs_set_scope(world, EcsFlecsCore);
 
     ecs_bootstrap_tag(world, EcsModule);
-    ecs_bootstrap_tag(world, EcsPrefab);
-    ecs_bootstrap_tag(world, EcsHidden);
     ecs_bootstrap_tag(world, EcsDisabled);
+    ecs_bootstrap_tag(world, EcsWildcard);
+    ecs_bootstrap_tag(world, EcsScope);
 
-    ecs_set_component_actions(world, EcsName, {
-        .ctor = ecs_ctor(EcsName),
-        .dtor = ecs_dtor(EcsName),
-        .copy = ecs_copy(EcsName),
-        .move = ecs_move(EcsName)
+    ecs_set_lifecycle(world, ecs_typeid(EcsName), &(ecs_lifecycle_t){
+        .ctor = (ecs_xtor_t)EcsName_ctor,
+        .dtor = (ecs_xtor_t)EcsName_dtor,
+        .copy = (ecs_copy_t)EcsName_copy,
+        .move = (ecs_move_t)EcsName_move
     });
 
     /* Initialize scopes */
     ecs_set(world, EcsFlecs, EcsName, {.value = "flecs"});
-    ecs_add_entity(world, EcsFlecs, EcsModule);
+    ecs_add_id(world, EcsFlecs, EcsModule);
     ecs_set(world, EcsFlecsCore, EcsName, {.value = "core"});
-    ecs_add_entity(world, EcsFlecsCore, EcsModule);
-    ecs_add_entity(world, EcsFlecsCore, ECS_CHILDOF | EcsFlecs);
-
-    /* Initialize EcsWorld */
-    ecs_set(world, EcsWorld, EcsName, {.value = "World"});
-    ecs_assert(ecs_get_name(world, EcsWorld) != NULL, ECS_INTERNAL_ERROR, NULL);
-    ecs_assert(ecs_lookup(world, "World") == EcsWorld, ECS_INTERNAL_ERROR, NULL);
-    ecs_add_entity(world, EcsWorld, ECS_CHILDOF | EcsFlecsCore);
-
-    /* Initialize EcsSingleton */
-    ecs_set(world, EcsSingleton, EcsName, {.value = "$"});
-    ecs_assert(ecs_get_name(world, EcsSingleton) != NULL, ECS_INTERNAL_ERROR, NULL);
-    ecs_assert(ecs_lookup(world, "$") == EcsSingleton, ECS_INTERNAL_ERROR, NULL);
-    ecs_add_entity(world, EcsSingleton, ECS_CHILDOF | EcsFlecsCore);
-
-    /* Initialize EcsWildcard */
-    ecs_set(world, EcsWildcard, EcsName, {.value = "*"});
-    ecs_assert(ecs_get_name(world, EcsWildcard) != NULL, ECS_INTERNAL_ERROR, NULL);
-    ecs_assert(ecs_lookup(world, "*") == EcsWildcard, ECS_INTERNAL_ERROR, NULL);
-    ecs_add_entity(world, EcsWildcard, ECS_CHILDOF | EcsFlecsCore);    
+    ecs_add_id(world, EcsFlecsCore, EcsModule);
+    ecs_add_id(world, EcsFlecsCore, ecs_role(EcsScope, EcsFlecs));
 
     ecs_set_scope(world, 0);
 

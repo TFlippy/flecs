@@ -29,32 +29,28 @@ extern "C" {
 //// Tracing
 ////////////////////////////////////////////////////////////////////////////////
 
-FLECS_EXPORT
-void _ecs_trace(
+FLECS_API void _ecs_trace(
     int level,
     const char *file,
     int32_t line,
     const char *fmt,
     ...);
 
-FLECS_EXPORT
-void _ecs_warn(
+FLECS_API void _ecs_warn(
     const char *file,
     int32_t line,
     const char *fmt,
     ...);
 
-FLECS_EXPORT
-void _ecs_err(
+FLECS_API void _ecs_err(
     const char *file,
     int32_t line,
     const char *fmt,
     ...);
-FLECS_EXPORT
-void ecs_log_push(void);
 
-FLECS_EXPORT
-void ecs_log_pop(void);
+FLECS_API void ecs_log_push(void);
+
+FLECS_API void ecs_log_pop(void);
 
 #ifndef FLECS_LEGACY
 
@@ -101,53 +97,32 @@ void ecs_log_pop(void);
 ////////////////////////////////////////////////////////////////////////////////
 
 /** Get description for error code */
-FLECS_EXPORT
-const char* ecs_strerror(
+FLECS_API const char* ecs_strerror(
     int32_t error_code);
 
 /** Abort */
-FLECS_EXPORT
-void _ecs_abort(
+FLECS_API void _ecs_abort(
     int32_t error_code,
-    const char *param,
     const char *file,
     int32_t line);
 
-#define ecs_abort(error_code, param)\
-    _ecs_abort(error_code, param, __FILE__, __LINE__); abort()
+#define ecs_abort(error_code)\
+    _ecs_abort(error_code, __FILE__, __LINE__); abort()
 
 /** Assert */
-FLECS_EXPORT
-void _ecs_assert(
+FLECS_API void _ecs_assert(
     bool condition,
     int32_t error_code,
-    const char *param,
     const char *condition_str,
     const char *file,
     int32_t line);
 
 #ifdef NDEBUG
-#define ecs_assert(condition, error_code, param)
+#define ecs_assert(condition, error_code)
 #else
-#define ecs_assert(condition, error_code, param)\
-    _ecs_assert(condition, error_code, param, #condition, __FILE__, __LINE__);\
+#define ecs_assert(condition, error_code)\
+    _ecs_assert(condition, error_code, #condition, __FILE__, __LINE__);\
     assert(condition)
-#endif
-
-FLECS_EXPORT
-void _ecs_parser_error(
-    const char *name,
-    const char *expr, 
-    int64_t column,
-    const char *fmt,
-    ...);
-
-#ifndef FLECS_LEGACY
-
-#define ecs_parser_error(name, expr, column, ...)\
-    _ecs_parser_error(name, expr, column, __VA_ARGS__);\
-    abort()
-
 #endif
 
 #ifdef __cplusplus

@@ -5,7 +5,9 @@
         "author": "Sander Mertens",
         "description": "Bake OS API implementation",
         "use": [
-            "flecs",
+            "flecs"
+        ],
+        "use_private": [
             "bake.util"
         ]
     }

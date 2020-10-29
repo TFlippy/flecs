@@ -19,23 +19,27 @@
 
 /* Headers of public dependencies */
 #include <flecs.h>
+
+/* Headers of private dependencies */
+#ifdef flecs_os_api_bake_EXPORTS
 #ifdef __BAKE__
 #include <bake_util.h>
+#endif
 #endif
 
 /* Convenience macro for exporting symbols */
 #ifndef flecs_os_api_bake_STATIC
 #if flecs_os_api_bake_EXPORTS && (defined(_MSC_VER) || defined(__MINGW32__))
-  #define FLECS_OS_API_BAKE_EXPORT __declspec(dllexport)
+  #define FLECS_OS_API_BAKE_API __declspec(dllexport)
 #elif flecs_os_api_bake_EXPORTS
-  #define FLECS_OS_API_BAKE_EXPORT __attribute__((__visibility__("default")))
+  #define FLECS_OS_API_BAKE_API __attribute__((__visibility__("default")))
 #elif defined _MSC_VER
-  #define FLECS_OS_API_BAKE_EXPORT __declspec(dllimport)
+  #define FLECS_OS_API_BAKE_API __declspec(dllimport)
 #else
-  #define FLECS_OS_API_BAKE_EXPORT
+  #define FLECS_OS_API_BAKE_API
 #endif
 #else
-  #define FLECS_OS_API_BAKE_EXPORT
+  #define FLECS_OS_API_BAKE_API
 #endif
 
 #endif

@@ -23,7 +23,7 @@ jobs:
       run: bake --strict
 
     - name: Build Flecs (release)
-      run: bake --strict --cfg release
+      run: bake --cfg release
 
     - name: Build examples
       run: |
@@ -51,7 +51,7 @@ jobs:
       run: bake --strict
 
     - name: Build Flecs (release)
-      run: bake --strict --cfg release
+      run: bake --cfg release
          
     - name: Run tests
       run: |
@@ -79,9 +79,7 @@ jobs:
     - name: Run tests
       run: |
         bake/bake examples/os_api/flecs-os_api-bake
-        bake/bake run test\cpp_api
-        bake/bake run test\api
-        bake/bake run test\collections
+        bake/bake run test\base
 
   sanitizer:
     timeout-minutes: 10
@@ -106,9 +104,7 @@ jobs:
     - name: Run tests
       run: |
         bake examples/os_api/flecs-os_api-bake
-        bake run test/api --cfg sanitize
-        bake run test/cpp_api --cfg sanitize
-        bake run test/collections --cfg sanitize
+        bake run test/base --cfg sanitize
 
   amalgamated:
     timeout-minutes: 10

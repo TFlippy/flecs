@@ -30,10 +30,6 @@
 extern "C" {
 #endif
 
-#ifdef __BAKE_LEGACY__
-#define FLECS_LEGACY
-#endif
-
 
 ////////////////////////////////////////////////////////////////////////////////
 //// Language support defines
@@ -58,7 +54,90 @@ typedef uint64_t ecs_flags64_t;
 
 /* Keep unsigned integers out of the codebase as they do more harm than good */
 typedef int32_t ecs_size_t;
+
+/** This reserves entity ids for components. Regular entity ids will start after
+ * this constant. This affects performance of table traversal, as edges with ids 
+ * lower than this constant are looked up in an array, whereas constants higher
+ * than this id are looked up in a map. Increasing this value can improve
+ * performance at the cost of (significantly) higher memory usage. */
+#define ECS_HI_COMPONENT_ID (256) /* Maximum number of components */
+
+
+////////////////////////////////////////////////////////////////////////////////
+//// Reserved ids
+////////////////////////////////////////////////////////////////////////////////
+
+/* Builtin component ids */
+#define FLECS__EEcsComponent (1)
+#define FLECS__EEcsName (2)
+
+/* Builtin tag ids */
+#define EcsModule (ECS_HI_COMPONENT_ID + 0)
+#define EcsDisabled (ECS_HI_COMPONENT_ID + 1)
+#define EcsWildcard (ECS_HI_COMPONENT_ID + 2)
+
+/* Builtin roles */
+#define EcsScope (ECS_HI_COMPONENT_ID + 3)
+
+/* Builtin module ids */
+#define EcsFlecs (ECS_HI_COMPONENT_ID + 4)
+#define EcsFlecsCore (ECS_HI_COMPONENT_ID + 5)
+
+/* Value used to quickly check if component is builtin. This is used to quickly
+ * filter out tables with builtin components (for example for ecs_delete) */
+#define EcsLastInternalComponentId (ecs_typeid(EcsName))
+
+/* The first user-defined component starts from this id. Ids up to this number
+ * are reserved for builtin components */
+#define EcsFirstUserComponentId (32)
+
+/* The first user-defined entity starts from this id. Ids up to this number
+ * are reserved for builtin components */
+#define EcsFirstUserEntityId (ECS_HI_COMPONENT_ID + 32)
+
+
+////////////////////////////////////////////////////////////////////////////////
+//// Entity id macro's
+////////////////////////////////////////////////////////////////////////////////
+
+#define ECS_ENTITY_MASK       ((uint64_t)0xFFFFFFFF)
+#define ECS_GENERATION_MASK   ((uint64_t)0xFFFF << 32)
+#define ECS_GENERATION(e)     ((e & ECS_GENERATION_MASK) >> 32)
+#define ECS_GENERATION_INC(e) ((e & ~ECS_GENERATION_MASK) | ((ECS_GENERATION(e) + 1) << 32))
+
+
+////////////////////////////////////////////////////////////////////////////////
+//// Utilities for working with trait identifiers
+////////////////////////////////////////////////////////////////////////////////
+
+#define ecs_entity_t_lo(value) ((uint32_t)(value))
+#define ecs_entity_t_hi(value) ((uint32_t)((value) >> 32))
+#define ecs_entity_t_comb(v1, v2) (((uint64_t)(v2) << 32) + (uint32_t)(v1))
+
+
+////////////////////////////////////////////////////////////////////////////////
+//// Error codes
+////////////////////////////////////////////////////////////////////////////////
+
+#define ECS_INTERNAL_ERROR (1)
+#define ECS_INVALID_OPERATION (2)
+#define ECS_INVALID_PARAMETER (3)
+#define ECS_INVALID_ID (4)
+#define ECS_INVALID_COMPONENT (5)
+#define ECS_OUT_OF_MEMORY (6)
+#define ECS_MISSING_OS_API (7)
+#define ECS_INCONSISTENT_COMPONENT_ACTION (8)
+#define ECS_INVALID_FROM_WORKER (9)
+
+
+////////////////////////////////////////////////////////////////////////////////
+//// Utilities
+////////////////////////////////////////////////////////////////////////////////
+
+#define ECS_OFFSET(o, offset) (void*)(((uintptr_t)(o)) + ((uintptr_t)(offset)))
 #define ECS_SIZEOF(T) (ecs_size_t)sizeof(T)
+#define ECS_ALIGN(size, alignment) (ecs_size_t)((((((size_t)size) - 1) / ((size_t)alignment)) + 1) * ((size_t)alignment))
+#define ECS_MAX(a, b) ((a > b) ? a : b)
 
 /* Use alignof in C++, or a trick in C. */
 #ifdef __cplusplus
@@ -77,190 +156,6 @@ typedef int32_t ecs_size_t;
 #define ECS_UNUSED
 #endif
 
-#define ECS_ALIGN(size, alignment) (ecs_size_t)((((((size_t)size) - 1) / ((size_t)alignment)) + 1) * ((size_t)alignment))
-
-/* Simple utility for determining the max of two values */
-#define ECS_MAX(a, b) ((a > b) ? a : b)
-
-
-////////////////////////////////////////////////////////////////////////////////
-//// Reserved component ids
-////////////////////////////////////////////////////////////////////////////////
-
-/** Builtin component ids */
-#define FLECS__EEcsComponent (1)
-#define FLECS__EEcsComponentLifecycle (2)
-#define FLECS__EEcsType (3)
-#define FLECS__EEcsName (6)
-
-/** System module component ids */
-#define FLECS__EEcsTrigger (4)
-#define FLECS__EEcsSystem (5)
-#define FLECS__EEcsTickSource (7)
-#define FLECS__EEcsSignatureExpr (8)
-#define FLECS__EEcsSignature (9)
-#define FLECS__EEcsQuery (10)
-#define FLECS__EEcsIterAction (11)
-#define FLECS__EEcsContext (12)
-
-/** Pipeline module component ids */
-#define FLECS__EEcsPipelineQuery (13)
-
-/** Timer module component ids */
-#define FLECS__EEcsTimer (14)
-#define FLECS__EEcsRateFilter (15)
-
-
-////////////////////////////////////////////////////////////////////////////////
-//// Entity id macro's
-////////////////////////////////////////////////////////////////////////////////
-
-#define ECS_ROLE_MASK         ((ecs_entity_t)0xFF << 56)
-#define ECS_ENTITY_MASK       ((uint64_t)0xFFFFFFFF)
-#define ECS_GENERATION_MASK   ((uint64_t)0xFFFF << 32)
-#define ECS_GENERATION(e)     ((e & ECS_GENERATION_MASK) >> 32)
-#define ECS_GENERATION_INC(e) ((e & ~ECS_GENERATION_MASK) | ((ECS_GENERATION(e) + 1) << 32))
-#define ECS_COMPONENT_MASK    ((ecs_entity_t)~ECS_ROLE_MASK)
-#define ECS_TYPE_ROLE_START   ECS_CHILDOF
-#define ECS_HAS_ROLE(e, role) ((e & ECS_ROLE_MASK) == ECS_##role)
-
-
-////////////////////////////////////////////////////////////////////////////////
-//// Convert between C typenames and variables
-////////////////////////////////////////////////////////////////////////////////
-
-/** Translate C type to ecs_type_t variable. */
-#define ecs_type(T) FLECS__T##T
-
-/** Translate C type to entity id. */
-#define ecs_typeid(T) FLECS__E##T
-
-/* DEPRECATED: old way to get entity id from type */
-#define ecs_entity(T) ecs_typeid(T)
-
-/** Translate C type to module struct. */
-#define ecs_module(T) FLECS__M##T
-
-/** Translate C type to module struct. */
-#define ecs_module_ptr(T) FLECS__M##T##_ptr
-
-/** Translate C type to module struct. */
-#define ecs_iter_action(T) FLECS__F##T
-
-#ifndef FLECS_LEGACY
-
-
-////////////////////////////////////////////////////////////////////////////////
-//// Utilities for working with trait identifiers
-////////////////////////////////////////////////////////////////////////////////
-
-#define ecs_entity_t_lo(value) ((uint32_t)(value))
-#define ecs_entity_t_hi(value) ((uint32_t)((value) >> 32))
-#define ecs_entity_t_comb(v1, v2) (((uint64_t)(v2) << 32) + (uint32_t)(v1))
-#define ecs_trait(comp, trait) ECS_TRAIT | ecs_entity_t_comb(comp, trait)
-
-
-////////////////////////////////////////////////////////////////////////////////
-//// Convenience macro's for ctor, dtor, move and copy
-////////////////////////////////////////////////////////////////////////////////
-
-/* Constructor / destructor convenience macro */
-#define ECS_XTOR_IMPL(type, postfix, var, ...)\
-    void type##_##postfix(\
-        ecs_world_t *world,\
-        ecs_entity_t component,\
-        const ecs_entity_t *entity_ptr,\
-        void *_ptr,\
-        size_t _size,\
-        int32_t _count,\
-        void *ctx)\
-    {\
-        (void)world;\
-        (void)component;\
-        (void)entity_ptr;\
-        (void)_ptr;\
-        (void)_size;\
-        (void)_count;\
-        (void)ctx;\
-        for (int32_t i = 0; i < _count; i ++) {\
-            ecs_entity_t entity = entity_ptr[i];\
-            type *var = &((type*)_ptr)[i];\
-            (void)entity;\
-            (void)var;\
-            __VA_ARGS__\
-        }\
-    }
-
-/* Copy convenience macro */
-#define ECS_COPY_IMPL(type, dst_var, src_var, ...)\
-    void type##_##copy(\
-        ecs_world_t *world,\
-        ecs_entity_t component,\
-        const ecs_entity_t *dst_entities,\
-        const ecs_entity_t *src_entities,\
-        void *_dst_ptr,\
-        const void *_src_ptr,\
-        size_t _size,\
-        int32_t _count,\
-        void *ctx)\
-    {\
-        (void)world;\
-        (void)component;\
-        (void)dst_entities;\
-        (void)src_entities;\
-        (void)_dst_ptr;\
-        (void)_src_ptr;\
-        (void)_size;\
-        (void)_count;\
-        (void)ctx;\
-        for (int32_t i = 0; i < _count; i ++) {\
-            ecs_entity_t dst_entity = dst_entities[i];\
-            ecs_entity_t src_entity = src_entities[i];\
-            type *dst_var = &((type*)_dst_ptr)[i];\
-            type *src_var = &((type*)_src_ptr)[i];\
-            (void)dst_entity;\
-            (void)src_entity;\
-            (void)dst_var;\
-            (void)src_var;\
-            __VA_ARGS__\
-        }\
-    }
-
-/* Move convenience macro */
-#define ECS_MOVE_IMPL(type, dst_var, src_var, ...)\
-    void type##_##move(\
-        ecs_world_t *world,\
-        ecs_entity_t component,\
-        const ecs_entity_t *dst_entities,\
-        const ecs_entity_t *src_entities,\
-        void *_dst_ptr,\
-        void *_src_ptr,\
-        size_t _size,\
-        int32_t _count,\
-        void *ctx)\
-    {\
-        (void)world;\
-        (void)component;\
-        (void)dst_entities;\
-        (void)src_entities;\
-        (void)_dst_ptr;\
-        (void)_src_ptr;\
-        (void)_size;\
-        (void)_count;\
-        (void)ctx;\
-        for (int32_t i = 0; i < _count; i ++) {\
-            ecs_entity_t dst_entity = dst_entities[i];\
-            ecs_entity_t src_entity = src_entities[i];\
-            type *dst_var = &((type*)_dst_ptr)[i];\
-            type *src_var = &((type*)_src_ptr)[i];\
-            (void)dst_entity;\
-            (void)src_entity;\
-            (void)dst_var;\
-            (void)src_var;\
-            __VA_ARGS__\
-        }\
-    }
-#endif
 #ifdef __cplusplus
 }
 #endif
