@@ -2949,7 +2949,7 @@ namespace _
   struct name_helper
   {
     static const char* name(void) {
-      static const size_t size = (sizeof(__PRETTY_FUNCTION__) - FRONT_SIZE - BACK_SIZE) / 2 + 1u;
+      static const size_t size = (sizeof(__PRETTY_FUNCTION__) - FRONT_SIZE - BACK_SIZE) / 2 + 1u + 6u;
       static char typeName[size] = {};
       memcpy(typeName, __PRETTY_FUNCTION__ + FRONT_SIZE, size - 1u);
       name_util::trim_name(typeName);
@@ -2964,7 +2964,7 @@ namespace _
   struct name_helper
   {
     static const char* name(void) {
-      static const size_t size = sizeof(__PRETTY_FUNCTION__) - FRONT_SIZE - BACK_SIZE;
+      static const size_t size = sizeof(__PRETTY_FUNCTION__) - FRONT_SIZE - BACK_SIZE + 6u;
       static char typeName[size] = {};
       memcpy(typeName, __PRETTY_FUNCTION__ + FRONT_SIZE, size - 1u);
       name_util::trim_name(typeName);
@@ -2979,7 +2979,7 @@ namespace _
   struct name_helper
   {
     static const char* name(void) {
-      static const size_t size = sizeof(__FUNCTION__) - FRONT_SIZE - BACK_SIZE;
+      static const size_t size = sizeof(__FUNCTION__) - FRONT_SIZE - BACK_SIZE + 6u;
       static char typeName[size] = {};
       memcpy(typeName, __FUNCTION__ + FRONT_SIZE, size - 1u);
       name_util::trim_name(typeName);
