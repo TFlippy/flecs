@@ -17,7 +17,6 @@
 #define FLECS_SYSTEM
 #define FLECS_PIPELINE
 #define FLECS_TIMER
-#define FLECS_STATS
 
 /* Addons */
 #define FLECS_BULK
@@ -27,6 +26,7 @@
 #define FLECS_READER_WRITER
 #define FLECS_SNAPSHOT
 #define FLECS_DIRECT_ACCESS
+#define FLECS_STATS
 #endif
 
 /* Set to double or int to increase accuracy of time keeping. Note that when
@@ -715,7 +715,7 @@ private:
 template <typename T>
 class vector {
 public:
-    explicit vector(ecs_vector_t *vector) : m_vector( vector ) { }
+    explicit vector(ecs_vector_t *v) : m_vector( v ) { }
 
     vector(int32_t count = 0) : m_vector( nullptr ) { 
         if (count) {
@@ -1709,6 +1709,7 @@ void ecs_os_set_api_defaults(void);
 #define ecs_os_memcmp(ptr1, ptr2, num) memcmp(ptr1, ptr2, (size_t)(num))
 #define ecs_os_memcpy(ptr1, ptr2, num) memcpy(ptr1, ptr2, (size_t)(num))
 #define ecs_os_memset(ptr, value, num) memset(ptr, value, (size_t)(num))
+#define ecs_os_memmove(ptr, value, num) memmove(ptr, value, (size_t)(num))
 
 #if defined(_MSC_VER)
 #define ecs_os_strcat(str1, str2) strcat_s(str1, INT_MAX, str2)
@@ -1878,7 +1879,7 @@ typedef struct ecs_filter_t {
     ecs_match_kind_t exclude_kind;  /**< Match kind for exclude components */
 } ecs_filter_t;
 
-/** Type that contains various statistics of a world. */
+/** Type that contains information about the world. */
 typedef struct ecs_world_info_t {
     ecs_entity_t last_component_id;   /**< Last issued component entity id */
     ecs_entity_t last_id;             /**< Last issued entity id */
@@ -6116,13 +6117,9 @@ void FlecsTimerImport(
 
 #endif
 #endif
-#ifdef FLECS_STATS
-#ifdef FLECS_STATS
-#define FLECS_BULK
-#define FLECS_MODULE
-#define FLECS_PIPELINE
-#define FLECS_TIMER
 
+/* Optional addons */
+#ifdef FLECS_BULK
 #ifdef FLECS_BULK
 
 /**
@@ -6260,182 +6257,6 @@ void ecs_bulk_delete(
 #endif
 
 #endif
-
-#ifndef FLECS_STATS_H
-#define FLECS_STATS_H
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-/* The naming convention of a metrics is:
- * <name>_<unit>
- *
- * If the metric is a monotonically increasing count, the metric will have the
- * suffix 'total'.
- *
- * If a member is of a composite type, it only has the metric name. A metric
- * name will be plural if it is measured from multiple sources/objects.
- */
-
-/* Type to keep track of memory that is in use vs. allocated */
-typedef struct ecs_memory_stat_t {
-    int32_t allocd_bytes;            /* Memory allocated */
-    int32_t used_bytes;              /* Memory in use */
-} ecs_memory_stat_t;
-
-/* Global statistics on memory allocations */
-typedef struct EcsAllocStats {
-    int64_t malloc_count_total;      /* Total number of times malloc was invoked */
-    int64_t realloc_count_total;     /* Total number of times realloc was invoked */
-    int64_t calloc_count_total;      /* Total number of times calloc was invoked */
-    int64_t free_count_total;        /* Total number of times free was invoked */
-} EcsAllocStats;
-
-/* Memory statistics on row (reactive) systems */
-typedef struct EcsRowSystemMemoryStats {
-    int32_t base_memory_bytes;              /* Size of the component datatype */
-    ecs_memory_stat_t columns_memory;       /* Memory in use for columns */
-    ecs_memory_stat_t components_memory;    /* Memory in use for components */
-} EcsRowSystemMemoryStats;
-
-/* Memory statistics on column (periodic) systems */
-typedef struct EcsSystemMemoryStats {
-    int32_t base_memory_bytes;              /* Size of the component datatype */
-    ecs_memory_stat_t columns_memory;       /* Memory in use for columns */
-    ecs_memory_stat_t active_tables_memory; /* Memory in use for active tables */
-    ecs_memory_stat_t inactive_tables_memory; /* Memory in use for inactive tables */
-    ecs_memory_stat_t jobs_memory;          /* Memory in use for jobs */
-    int32_t other_memory_bytes;             /* Remaining memory in use */
-} EcsSystemMemoryStats;
-
-/* Memory statistics for a world */
-typedef struct EcsMemoryStats {
-    int32_t __dummy;                        /* Allow for {0} initialization */
-    ecs_memory_stat_t total_memory;         /* Total amount of memory in use */
-    ecs_memory_stat_t entities_memory;      /* Memory in use for entities */
-    ecs_memory_stat_t components_memory;    /* Memory in use for components */
-    ecs_memory_stat_t systems_memory;       /* Memory in use for systems */
-    ecs_memory_stat_t types_memory;         /* Memory in use for types */
-    ecs_memory_stat_t tables_memory;        /* Memory in use for tables */
-    ecs_memory_stat_t stages_memory;        /* Memory in use for stages */
-    ecs_memory_stat_t world_memory;         /* Memory in use for world */
-} EcsMemoryStats;
-
-/* Component statistics */
-typedef struct EcsComponentStats {
-    ecs_entity_t entity;                    /* Entity handle of component */
-    const char *name;                       /* Entity name */
-    int32_t size_bytes;                     /* Size of the component */
-    ecs_memory_stat_t memory;               /* Memory in use for component */
-    int32_t entities_count;                 /* Number of entities for component */
-    int32_t tables_count;                   /* Number of tables for component */
-} EcsComponentStats; 
-
-/* System statistics */
-typedef struct EcsSystemStats {
-    ecs_entity_t entity;                    /* Entity handle of component */
-    const char *name;                       /* Entity name */
-    const char *signature;                  /* System signature */
-    ecs_entity_t phase;                     /* System kind */
-    FLECS_FLOAT period_seconds;             /* Period at which system runs */                       
-    int32_t tables_matched_count;           /* Number of tables matched */
-    int32_t entities_matched_count;         /* Number of entities matched */
-    int64_t invoke_count_total;            /* Number of times system got invoked */
-    FLECS_FLOAT seconds_total;              /* Total time spent in system */
-    bool is_enabled;                        /* Is system enabled */
-    bool is_active;                         /* Is system active */
-    bool is_hidden;                         /* Is system hidden */
-} EcsSystemStats;
-
-/* Type statistics (only for named types, created with ECS_TYPE) */
-typedef struct EcsTypeStats {
-    ecs_entity_t entity;                   /* Entity handle of type */
-    const char *name;                      /* Type name */
-    ecs_type_t type;                       /* Reference to type with nesting intact */
-    ecs_type_t normalized_type;            /* Reference to normalized type */
-    int32_t entities_count;                /* Number of plain entities in type */  
-    int32_t entities_childof_count;        /* Number of CHILDOF entities in type */
-    int32_t entities_instanceof_count;     /* Number of INSTANCEOF entities in type */
-    int32_t components_count;              /* Number of components in type */
-    int32_t col_systems_count;             /* Number of column (periodic) systems in type */
-    int32_t row_systems_count;             /* Number of row (reactive) systems in type */
-    int32_t enabled_systems_count;         /* Number of enabled systems in type */
-    int32_t active_systems_count;          /* Number of active systems in type */
-    int32_t instance_count;                /* Number of instances of this type */
-    bool is_hidden;                        /* Is type hidden */
-} EcsTypeStats; 
-
-/* Table statistics */
-typedef struct EcsTableStats {
-    ecs_type_t type;                       /* Reference to table type */
-    int32_t columns_count;                 /* Number of columns in table */
-    int32_t rows_count;                    /* Number of rows (entities) in table */                
-    int32_t systems_matched_count;         /* Number of systems matched */               
-    ecs_memory_stat_t entity_memory;       /* Memory in use for entity data */
-    ecs_memory_stat_t component_memory;    /* Memory in use for table data */
-    int32_t other_memory_bytes;            /* Memory in use for other */
-} EcsTableStats;
-
-/* World statistics */
-typedef struct EcsWorldStats {
-    double target_fps_hz;                  /* Target FPS */
-    int32_t tables_count;                  /* Number of tables in world */
-    int32_t components_count;              /* Number of components in world */
-    int32_t col_systems_count;             /* Number of column (periodic) systems in world */
-    int32_t row_systems_count;             /* Nunber of row (reactive) systems in world */
-    int32_t inactive_systems_count;        /* Number of inactive systems in world */
-    int32_t entities_count;                /* Number if entities in world */
-    int32_t threads_count;                 /* Number of threads in world */
-    int32_t frame_count_total;             /* Total number of frames processed */
-    double frame_seconds_total;            /* Total time spent processing frames */
-    double system_seconds_total;           /* Total time spent in systems */
-    double merge_seconds_total;            /* Total time spent merging */
-    double world_seconds_total;            /* Total time passed since simulation start */
-    double fps_hz;                         /* Frames per second (current) */
-} EcsWorldStats;
-
-/* Stats module component */
-typedef struct FlecsStats {
-    ECS_DECLARE_COMPONENT(EcsAllocStats);
-    ECS_DECLARE_COMPONENT(EcsWorldStats);
-    ECS_DECLARE_COMPONENT(EcsMemoryStats);
-    ECS_DECLARE_COMPONENT(EcsSystemStats);
-    ECS_DECLARE_COMPONENT(EcsSystemMemoryStats);
-    ECS_DECLARE_COMPONENT(EcsRowSystemMemoryStats);
-    ECS_DECLARE_COMPONENT(EcsComponentStats);
-    ECS_DECLARE_COMPONENT(EcsTableStats);
-    ECS_DECLARE_COMPONENT(EcsTablePtr);
-    ECS_DECLARE_COMPONENT(EcsTypeStats);
-} FlecsStats;
-
-FLECS_API
-void FlecsStatsImport(
-    ecs_world_t *world);
-
-#define FlecsStatsImportHandles(handles)\
-    ECS_IMPORT_COMPONENT(handles, EcsAllocStats);\
-    ECS_IMPORT_COMPONENT(handles, EcsWorldStats);\
-    ECS_IMPORT_COMPONENT(handles, EcsMemoryStats);\
-    ECS_IMPORT_COMPONENT(handles, EcsSystemStats);\
-    ECS_IMPORT_COMPONENT(handles, EcsSystemMemoryStats);\
-    ECS_IMPORT_COMPONENT(handles, EcsRowSystemMemoryStats);\
-    ECS_IMPORT_COMPONENT(handles, EcsComponentStats);\
-    ECS_IMPORT_COMPONENT(handles, EcsTableStats);\
-    ECS_IMPORT_COMPONENT(handles, EcsTablePtr);\
-    ECS_IMPORT_COMPONENT(handles, EcsTypeStats);
-
-#ifdef __cplusplus
-}
-#endif
-
-#endif
-
-#endif
-#endif
-
-/* Optional addons */
-#ifdef FLECS_BULK
 #endif
 #ifdef FLECS_DBG
 #ifdef FLECS_DBG
@@ -6751,9 +6572,9 @@ ecs_reader_t ecs_reader_init_w_iter(
  * @return The number of bytes read.
  */ 
 FLECS_API
-ecs_size_t ecs_reader_read(
+int32_t ecs_reader_read(
     char *buffer,
-    ecs_size_t size,
+    int32_t size,
     ecs_reader_t *reader);
 
 /** Initialize a writer.
@@ -6793,9 +6614,9 @@ ecs_writer_t ecs_writer_init(
  * @return Zero if success, non-zero if failed to deserialize.
  */
 FLECS_API
-int ecs_writer_write(
+int32_t ecs_writer_write(
     const char *buffer,
-    ecs_size_t size,
+    int32_t size,
     ecs_writer_t *writer);
 
 #ifdef __cplusplus
@@ -7263,6 +7084,70 @@ void ecs_record_move_to(
 
 #endif
 #endif
+#ifdef FLECS_STATS
+#ifdef FLECS_STATS
+
+#ifndef FLECS_STATS_H
+#define FLECS_STATS_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct ecs_world_stats_t {
+    int32_t entity_count;                   /**< Number of entities */
+    int32_t component_count;                /**< Number of components */
+    int32_t query_count;                    /**< Number of queries */
+    int32_t system_count;                   /**< Number of systems */
+    int32_t table_count;                    /**< Number of tables */
+    int32_t empty_table_count;              /**< Number of empty tables */
+    int32_t singleton_table_count;          /**< Number of singleton tables. Singleton tables are tables with just a single entity that contains itself */
+    int32_t max_entities_per_table;         /**< Max number of entities per table */
+    int32_t max_components_per_table;       /**< Max number of components per table. This includes zero-sized components (tags) */
+    int32_t max_columns_per_table;          /**< Max number of columns per table. A column is a component with a non-zero size */
+    int32_t max_matched_queries_per_table;  /**< Max number of queries matched with a single table */
+
+    /* Total number of deferred operations */
+    int32_t new_count;
+    int32_t bulk_new_count;
+    int32_t delete_count;
+    int32_t clear_count;
+    int32_t add_count;
+    int32_t remove_count;
+    int32_t set_count;
+    int32_t discard_count;
+} ecs_world_stats_t;
+
+/** Get world statistics.
+ * Obtain statistics for the provided world. This operation loops several times
+ * over the tables in the world, and can impact application performance.
+ *
+ * @param world The world.
+ * @param stats Out parameter for statistics.
+ */
+FLECS_API void ecs_get_world_stats(
+    ecs_world_t *world,
+    ecs_world_stats_t *stats);
+
+/** Print world statistics.
+ * Print statistics obtained by ecs_get_world_statistics and in the
+ * ecs_world_info_t struct.
+ * 
+ * @param world The world.
+ * @param stats The statistics to print.
+ */
+FLECS_API void ecs_dump_world_stats(
+    ecs_world_t *world,
+    const ecs_world_stats_t *stats);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
+
+#endif
+#endif
 
 #ifdef __cplusplus
 }
@@ -7396,7 +7281,7 @@ static const ecs_entity_t Owned = ECS_OWNED;
  */
 class unsafe_column {
 public:
-    unsafe_column(void* array, std::size_t size, std::size_t count, bool is_shared = false)
+    unsafe_column(void* array, size_t size, size_t count, bool is_shared = false)
         : m_array(array)
         , m_size(size)
         , m_count(count) 
@@ -7452,7 +7337,7 @@ public:
      * @param count Number of elements in component array.
      * @param is_shared Is the component shared or not.
      */
-    column(T* array, std::size_t count, bool is_shared = false)
+    column(T* array, size_t count, bool is_shared = false)
         : m_array(array)
         , m_count(count) 
         , m_is_shared(is_shared) {}
@@ -7600,7 +7485,7 @@ private:
 /** Class that enables iterating over table columns.
  */
 class iter final {
-    using row_iterator = _::range_iterator<int>;
+    using row_iterator = _::range_iterator<size_t>;
 public:
     /** Construct iterator from C iterator object.
      * This operation is typically not invoked directly by the user.
@@ -7609,7 +7494,7 @@ public:
      */
     iter(const ecs_iter_t *it) : m_iter(it) { 
         m_begin = 0;
-        m_end = it->count;
+        m_end = static_cast<std::size_t>(it->count);
     }
 
     row_iterator begin() const {
@@ -7630,8 +7515,8 @@ public:
 
     /** Number of entities to iterate over. 
      */
-    int32_t count() const {
-        return m_iter->count;
+    size_t count() const {
+        return static_cast<size_t>(m_iter->count);
     }
 
     /** Number of columns in iteator.
@@ -7644,7 +7529,7 @@ public:
      *
      * @param col The column id.
      */
-    int32_t column_size(int32_t col) const {
+    size_t column_size(int32_t col) const {
         return ecs_column_size(m_iter, col);
     }    
 
@@ -7728,7 +7613,7 @@ public:
      *
      * @param row Row being iterated over.
      */
-    flecs::entity entity(int32_t row) const;
+    flecs::entity entity(size_t row) const;
 
     /** Obtain type of table being iterated over.
      */
@@ -7751,8 +7636,8 @@ public:
      * @param table_column Id of table column (corresponds with location in table type).
      * @return Pointer to table column.
      */
-    void* table_column(int32_t table_column) const {
-        return ecs_table_column(m_iter, table_column);
+    void* table_column(int32_t col) const {
+        return ecs_table_column(m_iter, col);
     }
 
     /** Obtain typed pointer to table column.
@@ -7766,7 +7651,8 @@ public:
         auto type = ecs_iter_type(m_iter);
         auto col = ecs_type_index_of(type, _::component_info<T>::id());
         ecs_assert(col != -1, ECS_INVALID_PARAMETER, NULL);
-        return flecs::column<T>(static_cast<T*>(ecs_table_column(m_iter, col)), m_iter->count, false);
+        return flecs::column<T>(static_cast<T*>(ecs_table_column(m_iter, col)), 
+            static_cast<std::size_t>(m_iter->count), false);
     }
 
     /** Obtain column with const type.
@@ -7779,7 +7665,7 @@ public:
      */
     template <typename T,
         typename std::enable_if<std::is_const<T>::value, void>::type* = nullptr>
-    flecs::column<T> column(unsigned int col) const {
+    flecs::column<T> column(int32_t col) const {
         return get_column<T>(col);
     }
 
@@ -7878,7 +7764,7 @@ private:
             ECS_COLUMN_TYPE_MISMATCH, NULL);
 #endif
 
-        int32_t count;
+        size_t count;
         bool is_shared = !ecs_is_owned(m_iter, column_id);
 
         /* If a shared column is retrieved with 'column', there will only be a
@@ -7889,10 +7775,12 @@ private:
         } else {
             /* If column is owned, there will be as many values as there are
              * entities. */
-            count = m_iter->count;
+            count = static_cast<size_t>(m_iter->count);
         }
         
-        return flecs::column<T>(static_cast<T*>(ecs_column_w_size(m_iter, sizeof(T), column_id)), count, is_shared);
+        return flecs::column<T>(
+            static_cast<T*>(ecs_column_w_size(m_iter, sizeof(T), column_id)), 
+            count, is_shared);
     } 
 
     flecs::unsafe_column get_unsafe_column(int32_t column_id) const {
@@ -7908,7 +7796,7 @@ private:
         } else {
             /* If column is owned, there will be as many values as there are
              * entities. */
-            count = m_iter->count;
+            count = static_cast<size_t>(m_iter->count);
         }
 
         return flecs::unsafe_column(ecs_column_w_size(m_iter, 0, column_id), size, count, is_shared);
@@ -7922,12 +7810,12 @@ private:
     }       
 
     const ecs_iter_t *m_iter;
-    int32_t m_begin;
-    int32_t m_end;
+    std::size_t m_begin;
+    std::size_t m_end;
 };
 
 template <typename T>
-inline column<T>::column(iter &iter, int col) {
+inline column<T>::column(iter &iter, int32_t col) {
     *this = iter.column<T>(col);
 }
 
@@ -8137,8 +8025,8 @@ public:
      * @param type Type to preallocate memory for.
      * @param entity_count Number of entities to preallocate memory for.
      */
-    void dim_type(type_t type, std::int32_t entity_count) const {
-        ecs_dim_type(m_world, type, entity_count);
+    void dim_type(type_t t, std::int32_t entity_count) const {
+        ecs_dim_type(m_world, t, entity_count);
     }
 
     /** Set entity range.
@@ -9694,10 +9582,10 @@ public:
      * @param entity The entity id to check.
      * @return True if the entity has the provided entity id, false otherwise.
      */
-    bool has(entity_t entity) const {
+    bool has(entity_t e) const {
         ecs_assert(m_world != NULL, ECS_INVALID_PARAMETER, NULL);
         ecs_assert(m_id != 0, ECS_INVALID_PARAMETER, NULL);
-        return ecs_has_entity(m_world, m_id, entity);
+        return ecs_has_entity(m_world, m_id, e);
     }
 
     /** Check if entity has the provided parent.
@@ -9738,8 +9626,8 @@ public:
      * @param entity The entity to check.
      * @return True if the entity has the provided entity, false otherwise.
      */
-    bool has(const entity& entity) const {
-        return has(entity.id());
+    bool has(const entity& e) const {
+        return has(e.id());
     }
 
     /** Check if entity has the provided parent.
@@ -9776,10 +9664,10 @@ public:
      * @param entity The entity id to check.
      * @return True if the entity owns the provided entity id, false otherwise.
      */
-    bool owns(entity_t entity) const {
+    bool owns(entity_t e) const {
         ecs_assert(m_world != NULL, ECS_INVALID_PARAMETER, NULL);
         ecs_assert(m_id != 0, ECS_INVALID_PARAMETER, NULL);
-        return ecs_owns_entity(m_world, m_id, entity, true);
+        return ecs_owns_entity(m_world, m_id, e, true);
     }
 
     /** Check if entity owns the provided type.
@@ -9800,8 +9688,8 @@ public:
      * @param entity The entity to check.
      * @return True if the entity owns the provided entity, false otherwise.
      */
-    bool owns(const entity& entity) const {
-        return owns(entity.id());
+    bool owns(const entity& e) const {
+        return owns(e.id());
     }
 
     /** Check if entity owns the provided component.
@@ -9866,11 +9754,11 @@ public:
      * @param component The component for which to check the trait.
      * @return True if the entity has the provided trait, false otherwise.
      */
-    bool has_trait(flecs::entity trait, flecs::entity entity) const {
+    bool has_trait(flecs::entity trait, flecs::entity e) const {
         ecs_assert(m_world != NULL, ECS_INVALID_PARAMETER, NULL);
         ecs_assert(m_id != 0, ECS_INVALID_PARAMETER, NULL);
         return ecs_has_entity(m_world, m_id, ecs_trait(
-            entity.id(), trait.id()));
+            e.id(), trait.id()));
     }
 
     /** Check if entity has the provided switch.
@@ -10170,24 +10058,24 @@ namespace _
             
             /* Remove 'const' */
             ecs_size_t const_len = ecs_os_strlen("const ");
-            if (!ecs_os_strncmp(typeName, "const ", const_len)) {
-                memmove(typeName, typeName + const_len, len - const_len);
+            if ((len > const_len) && !ecs_os_strncmp(typeName, "const ", const_len)) {
+                ecs_os_memmove(typeName, typeName + const_len, len - const_len);
                 typeName[len - const_len] = '\0';
                 len -= const_len;
             }
 
             /* Remove 'struct' */
             ecs_size_t struct_len = ecs_os_strlen("struct ");
-            if (!ecs_os_strncmp(typeName, "struct ", struct_len)) {
-                memmove(typeName, typeName + struct_len, len - struct_len);
+            if ((len > struct_len) && !ecs_os_strncmp(typeName, "struct ", struct_len)) {
+                ecs_os_memmove(typeName, typeName + struct_len, len - struct_len);
                 typeName[len - struct_len] = '\0';
                 len -= struct_len;
             }
 
             /* Remove 'class' */
             ecs_size_t class_len = ecs_os_strlen("class ");
-            if (!ecs_os_strncmp(typeName, "class ", class_len)) {
-                memmove(typeName, typeName + class_len, len - class_len);
+            if ((len > class_len) && !ecs_os_strncmp(typeName, "class ", class_len)) {
+                ecs_os_memmove(typeName, typeName + class_len, len - class_len);
                 typeName[len - class_len] = '\0';
                 len -= class_len;
             }            
@@ -10217,7 +10105,7 @@ namespace _
   struct name_helper
   {
     static const char* name(void) {
-      static const size_t size = (sizeof(__PRETTY_FUNCTION__) - FRONT_SIZE - BACK_SIZE) / 2 + 1u;
+      static const size_t size = (sizeof(__PRETTY_FUNCTION__) - FRONT_SIZE - BACK_SIZE) / 2 + 1u + 6u;
       static char typeName[size] = {};
       memcpy(typeName, __PRETTY_FUNCTION__ + FRONT_SIZE, size - 1u);
       name_util::trim_name(typeName);
@@ -10232,7 +10120,7 @@ namespace _
   struct name_helper
   {
     static const char* name(void) {
-      static const size_t size = sizeof(__PRETTY_FUNCTION__) - FRONT_SIZE - BACK_SIZE;
+      static const size_t size = sizeof(__PRETTY_FUNCTION__) - FRONT_SIZE - BACK_SIZE + 6u;
       static char typeName[size] = {};
       memcpy(typeName, __PRETTY_FUNCTION__ + FRONT_SIZE, size - 1u);
       name_util::trim_name(typeName);
@@ -10247,7 +10135,7 @@ namespace _
   struct name_helper
   {
     static const char* name(void) {
-      static const size_t size = sizeof(__FUNCTION__) - FRONT_SIZE - BACK_SIZE;
+      static const size_t size = sizeof(__FUNCTION__) - FRONT_SIZE - BACK_SIZE + 6u;
       static char typeName[size] = {};
       memcpy(typeName, __FUNCTION__ + FRONT_SIZE, size - 1u);
       name_util::trim_name(typeName);
@@ -10268,6 +10156,12 @@ void component_ctor(
     int32_t count,
     void *ctx)
 {
+    (void)world;
+    (void)component;
+    (void)entity_ptr;
+    (void)size;
+    (void)ctx;
+
     ecs_assert(size == sizeof(T), ECS_INTERNAL_ERROR, NULL);
     T *t_ptr = static_cast<T*>(ptr);
     
@@ -10286,6 +10180,12 @@ void component_dtor(
     int32_t count,
     void *ctx)
 {
+    (void)world;
+    (void)component;
+    (void)entity_ptr;
+    (void)size;
+    (void)ctx;
+
     ecs_assert(size == sizeof(T), ECS_INTERNAL_ERROR, NULL);
     T *t_ptr = static_cast<T*>(ptr);
     
@@ -10306,6 +10206,13 @@ void component_copy(
     int32_t count,
     void *ctx)
 {
+    (void)world;
+    (void)component;
+    (void)dst_entity;
+    (void)src_entity;
+    (void)size;
+    (void)ctx;
+
     ecs_assert(size == sizeof(T), ECS_INTERNAL_ERROR, NULL);
     T *t_dst_ptr = static_cast<T*>(dst_ptr);
     const T *t_src_ptr = static_cast<const T*>(src_ptr);
@@ -10327,6 +10234,13 @@ void component_move(
     int32_t count,
     void *ctx)
 {
+    (void)world;
+    (void)component;
+    (void)dst_entity;
+    (void)src_entity;
+    (void)size;
+    (void)ctx;
+
     ecs_assert(size == sizeof(T), ECS_INTERNAL_ERROR, NULL);
     T *t_dst_ptr = static_cast<T*>(dst_ptr);
     T *t_src_ptr = static_cast<T*>(src_ptr);
@@ -10759,17 +10673,18 @@ public:
 
 private:
     /* Dummy function when last component has been added */
-    void populate_columns(ecs_iter_t *iter, int index) { 
+    void populate_columns(ecs_iter_t *iter, size_t index) { 
         (void)iter;
         (void)index;
     }
 
     /* Populate columns array recursively */
     template <typename T, typename... Targs>
-    void populate_columns(ecs_iter_t *iter, int index, T comp, Targs... comps) {
-        void *ptr = ecs_column_w_size(iter, sizeof(*comp), index + 1);
+    void populate_columns(ecs_iter_t *iter, size_t index, T comp, Targs... comps) {
+        int32_t column = static_cast<int32_t>(index + 1);
+        void *ptr = ecs_column_w_size(iter, sizeof(*comp), column);
         m_columns[index].ptr = ptr;
-        m_columns[index].is_shared = !ecs_is_owned(iter, index + 1) && ptr != nullptr;
+        m_columns[index].is_shared = !ecs_is_owned(iter, column) && ptr != nullptr;
         populate_columns(iter, index + 1, comps ...);
     }
 };
@@ -10788,7 +10703,7 @@ public:
     // Invoke system
     template <typename... Targs,
         typename std::enable_if<sizeof...(Targs) == sizeof...(Components), void>::type* = nullptr>
-    static void call_system(ecs_iter_t *iter, Func func, int index, Columns& columns, Targs... comps) {
+    static void call_system(ecs_iter_t *iter, Func func, size_t index, Columns& columns, Targs... comps) {
         flecs::iter iter_wrapper(iter);
         (void)index;
         (void)columns;
@@ -10796,14 +10711,15 @@ public:
         // Use any_column so we can transparently use shared components
         for (auto row : iter_wrapper) {
             func(iter_wrapper.entity(row), (_::any_column<typename std::remove_reference<Components>::type>(
-                 (typename std::remove_reference< typename std::remove_pointer<Components>::type >::type*)comps.ptr, iter->count, comps.is_shared))[row]...);
+                 (typename std::remove_reference< typename std::remove_pointer<Components>::type >::type*)comps.ptr, 
+                    static_cast<size_t>(iter->count), comps.is_shared))[row]...);
         }
     }
 
     // Add components one by one to parameter pack
     template <typename... Targs,
         typename std::enable_if<sizeof...(Targs) != sizeof...(Components), void>::type* = nullptr>
-    static void call_system(ecs_iter_t *iter, Func func, int index, Columns& columns, Targs... comps) {
+    static void call_system(ecs_iter_t *iter, Func func, size_t index, Columns& columns, Targs... comps) {
         call_system(iter, func, index + 1, columns, comps..., columns[index]);
     }
 
@@ -10881,7 +10797,7 @@ public:
     /* Invoke system */
     template <typename... Targs,
         typename std::enable_if<sizeof...(Targs) == sizeof...(Components), void>::type* = nullptr>
-    static void call_system(ecs_iter_t *iter, Func func, int index, Columns& columns, Targs... comps) {
+    static void call_system(ecs_iter_t *iter, Func func, size_t index, Columns& columns, Targs... comps) {
         (void)index;
         (void)columns;
         flecs::iter iter_wrapper(iter);
@@ -10891,7 +10807,7 @@ public:
     /** Add components one by one to parameter pack */
     template <typename... Targs,
         typename std::enable_if<sizeof...(Targs) != sizeof...(Components), void>::type* = nullptr>
-    static void call_system(ecs_iter_t *iter, Func func, int index, Columns& columns, Targs... comps) {
+    static void call_system(ecs_iter_t *iter, Func func, size_t index, Columns& columns, Targs... comps) {
         call_system(iter, func, index + 1, columns, comps..., columns[index]);
     }
 
@@ -10978,35 +10894,35 @@ public:
 
     template <typename Func>
     void each(Func func) const {
-        ecs_iter_t iter = ecs_query_iter(m_query);
+        ecs_iter_t it = ecs_query_iter(m_query);
 
-        while (ecs_query_next(&iter)) {
-            _::column_args<Components...> columns(&iter);
+        while (ecs_query_next(&it)) {
+            _::column_args<Components...> columns(&it);
             _::each_invoker<Func, Components...> ctx(func);
-            ctx.call_system(&iter, func, 0, columns.m_columns);
+            ctx.call_system(&it, func, 0, columns.m_columns);
         }
     }
 
     /* DEPRECATED */
     template <typename Func>
     void action(Func func) const {
-        ecs_iter_t iter = ecs_query_iter(m_query);
+        ecs_iter_t it = ecs_query_iter(m_query);
 
-        while (ecs_query_next(&iter)) {
-            _::column_args<Components...> columns(&iter);
+        while (ecs_query_next(&it)) {
+            _::column_args<Components...> columns(&it);
             _::action_invoker<Func, Components...> ctx(func);
-            ctx.call_system(&iter, func, 0, columns.m_columns);
+            ctx.call_system(&it, func, 0, columns.m_columns);
         }
     }  
 
     template <typename Func>
     void iter(Func func) const {
-        ecs_iter_t iter = ecs_query_iter(m_query);
+        ecs_iter_t it = ecs_query_iter(m_query);
 
-        while (ecs_query_next(&iter)) {
-            _::column_args<Components...> columns(&iter);
+        while (ecs_query_next(&it)) {
+            _::column_args<Components...> columns(&it);
             _::iter_invoker<Func, Components...> ctx(func);
-            ctx.call_system(&iter, func, 0, columns.m_columns);
+            ctx.call_system(&it, func, 0, columns.m_columns);
         }
     }        
 };
@@ -11244,7 +11160,7 @@ public:
         ecs_assert(!m_finalized, ECS_INVALID_PARAMETER, NULL);
         auto ctx = new _::action_invoker<Func, Components...>(func);
 
-        create_system(func, _::action_invoker<Func, Components...>::run, false);
+        create_system(_::action_invoker<Func, Components...>::run, false);
 
         EcsContext ctx_value = {ctx};
         ecs_set_ptr(m_world, m_id, EcsContext, &ctx_value);
@@ -11260,7 +11176,7 @@ public:
         ecs_assert(!m_finalized, ECS_INVALID_PARAMETER, NULL);
         auto ctx = new _::iter_invoker<Func, Components...>(func);
 
-        create_system(func, _::iter_invoker<Func, Components...>::run, false);
+        create_system(_::iter_invoker<Func, Components...>::run, false);
 
         EcsContext ctx_value = {ctx};
         ecs_set_ptr(m_world, m_id, EcsContext, &ctx_value);
@@ -11274,7 +11190,7 @@ public:
     system& each(Func func) {
         auto ctx = new _::each_invoker<Func, Components...>(func);
 
-        create_system(func, _::each_invoker<Func, Components...>::run, true);
+        create_system(_::each_invoker<Func, Components...>::run, true);
 
         EcsContext ctx_value = {ctx};
         ecs_set_ptr(m_world, m_id, EcsContext, &ctx_value);
@@ -11284,8 +11200,8 @@ public:
 
     ~system() = default;
 private:
-    template <typename Func, typename Invoker>
-    entity_t create_system(Func func, Invoker invoker, bool is_each) {
+    template <typename Invoker>
+    entity_t create_system(Invoker invoker, bool is_each) {
         ecs_assert(m_id != 0, ECS_INTERNAL_ERROR, NULL);
 
         entity_t e;
@@ -11322,7 +11238,7 @@ private:
 
         ecs_assert(e == m_id, ECS_INTERNAL_ERROR, NULL);
 
-        if (m_interval) {
+        if (m_interval != 0) {
             ecs_set_interval(m_world, e, m_interval);
         }
 
@@ -11583,8 +11499,8 @@ public:
         m_reader = ecs_reader_init_w_iter(&it, ecs_snapshot_next);
     }
 
-    std::size_t read(char *buffer, std::size_t size) {
-        return ecs_reader_read(buffer, size, &m_reader);
+    int32_t read(char *buffer, std::int64_t size) {
+        return ecs_reader_read(buffer, static_cast<int32_t>(size), &m_reader);
     }
 
 private:
@@ -11602,8 +11518,8 @@ public:
         m_writer = ecs_writer_init(world.c_ptr());
     }
 
-    int write(const char *buffer, std::size_t size) {
-        return ecs_writer_write(buffer, size, &m_writer);
+    int32_t write(const char *buffer, std::int64_t size) {
+        return ecs_writer_write(buffer, static_cast<int32_t>(size), &m_writer);
     }
 
 private:
@@ -11830,8 +11746,8 @@ inline flecs::world iter::world() const {
     return flecs::world(m_iter->world);
 }
 
-inline flecs::entity iter::entity(int32_t row) const {
-    ecs_assert(row < m_iter->count, ECS_COLUMN_INDEX_OUT_OF_RANGE, NULL);
+inline flecs::entity iter::entity(size_t row) const {
+    ecs_assert(row < (size_t)m_iter->count, ECS_COLUMN_INDEX_OUT_OF_RANGE, NULL);
     return flecs::entity(m_iter->world, m_iter->entities[row]);
 }
 
@@ -11870,20 +11786,20 @@ inline void world::add(flecs::filter filter) const {
         m_world, _::component_info<T>::type(m_world), nullptr, filter.c_ptr());
 }
 
-inline void world::add(flecs::type type) const {
-    ecs_bulk_add_remove_type(m_world, type.c_ptr(), nullptr, nullptr);
+inline void world::add(flecs::type t) const {
+    ecs_bulk_add_remove_type(m_world, t.c_ptr(), nullptr, nullptr);
 }
 
-inline void world::add(flecs::type type, flecs::filter filter) const {
-    ecs_bulk_add_remove_type(m_world, type.c_ptr(), nullptr, filter.c_ptr());
+inline void world::add(flecs::type t, flecs::filter filter) const {
+    ecs_bulk_add_remove_type(m_world, t.c_ptr(), nullptr, filter.c_ptr());
 }
 
-inline void world::add(class flecs::entity entity) const {
-    ecs_bulk_add_remove_type(m_world, entity.to_type().c_ptr(), nullptr, nullptr);
+inline void world::add(class flecs::entity e) const {
+    ecs_bulk_add_remove_type(m_world, e.to_type().c_ptr(), nullptr, nullptr);
 }
 
-inline void world::add(class flecs::entity entity, flecs::filter filter) const {
-    ecs_bulk_add_remove_type(m_world, entity.to_type().c_ptr(), nullptr, filter.c_ptr());
+inline void world::add(class flecs::entity e, flecs::filter filter) const {
+    ecs_bulk_add_remove_type(m_world, e.to_type().c_ptr(), nullptr, filter.c_ptr());
 }
 
 template <typename T>
@@ -11892,20 +11808,20 @@ inline void world::remove(flecs::filter filter) const {
         m_world, nullptr, _::component_info<T>::type(m_world), filter.c_ptr());
 }
 
-inline void world::remove(flecs::type type) const {
-    ecs_bulk_add_remove_type(m_world, nullptr, type.c_ptr(), nullptr);
+inline void world::remove(flecs::type t) const {
+    ecs_bulk_add_remove_type(m_world, nullptr, t.c_ptr(), nullptr);
 }
 
-inline void world::remove(flecs::type type, flecs::filter filter) const {
-    ecs_bulk_add_remove_type(m_world, nullptr, type.c_ptr(), filter.c_ptr());
+inline void world::remove(flecs::type t, flecs::filter filter) const {
+    ecs_bulk_add_remove_type(m_world, nullptr, t.c_ptr(), filter.c_ptr());
 }
 
-inline void world::remove(class entity entity) const {
-    ecs_bulk_add_remove_type(m_world, nullptr, entity.to_type().c_ptr(), nullptr);
+inline void world::remove(class entity e) const {
+    ecs_bulk_add_remove_type(m_world, nullptr, e.to_type().c_ptr(), nullptr);
 }
 
-inline void world::remove(class entity entity, flecs::filter filter) const {
-    ecs_bulk_add_remove_type(m_world, nullptr, entity.to_type().c_ptr(), filter.c_ptr());
+inline void world::remove(class entity e, flecs::filter filter) const {
+    ecs_bulk_add_remove_type(m_world, nullptr, e.to_type().c_ptr(), filter.c_ptr());
 }
 
 inline flecs::world_filter world::filter(const flecs::filter& filter) const {
@@ -11950,8 +11866,8 @@ inline flecs::entity world::use(const char *name, const char *alias) {
     return flecs::entity(m_world, id);
 }
 
-inline void world::use(flecs::entity entity, const char *alias) {
-    entity_t id = entity.id();
+inline void world::use(flecs::entity e, const char *alias) {
+    entity_t id = e.id();
     const char *name = alias;
     if (!name) {
         // If no name is defined, use the entity name without the scope
@@ -12119,7 +12035,7 @@ bool pack_args_to_string(world_t *world, std::stringstream& str, bool is_each) {
         (optional_modifier<Components>())...
     };        
 
-    int i = 0;
+    size_t i = 0;
     for (auto id : ids) {
         if (i) {
             str << ",";

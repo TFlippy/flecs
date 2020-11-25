@@ -10,7 +10,7 @@ struct Position {
     float y;
 };
 
-int main(int argc, char *argv[]) {
+int main(int, char *[]) {
     flecs::world ecs;
 
     // Singleton components can simply be set on the world
@@ -24,12 +24,12 @@ int main(int argc, char *argv[]) {
     ecs.system<Position>(nullptr, "$Game")
         .iter([](flecs::iter it, Position* p) {
             // The singleton component can be retrieved as a regular column
-            auto g = it.column<Game>(2); // 2, because Position is 1
+            auto game = it.column<Game>(2); // 2, because Position is 1
 
             for (auto i : it) {
                 if (p[i].x > 1) {
                     // Use as pointer, since it's a single value
-                    g->score ++;
+                    game->score ++;
                 }
             }
         });
