@@ -252,7 +252,7 @@ void ecs_os_set_api(
     ecs_os_api_t *os_api);
 
 FLECS_API
-void ecs_os_set_api_defaults(void);
+ecs_os_api_t* ecs_os_set_api_defaults(void);
 
 /* Memory management */
 #define ecs_os_malloc(size) ecs_os_api.malloc_(size);

@@ -217,11 +217,11 @@ char* ecs_os_api_module_to_etc(const char *module) {
     return ecs_strbuf_get(&lib);
 }
 
-void ecs_os_set_api_defaults(void)
+ecs_os_api_t* ecs_os_set_api_defaults(void)
 {
     /* Don't overwrite if already initialized */
     if (ecs_os_api_initialized != 0) {
-        return;
+        return &ecs_os_api;
     }
 
     ecs_os_time_setup();
@@ -255,6 +255,8 @@ void ecs_os_set_api_defaults(void)
     }
 
     ecs_os_api.abort_ = abort;
+
+    return &ecs_os_api;
 }
 
 bool ecs_os_has_heap(void) {

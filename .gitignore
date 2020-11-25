@@ -10,3 +10,15 @@ bazel-flecs
 bazel-genfiles
 bazel-out
 bazel-testlogs
+.vs
+CMakeFiles
+Debug
+Release
+RelWithDebinfo
+examples
+*.sln
+*.vcxproj
+*.filters
+*.user
+*.cmake
+CMakeCache.txt
