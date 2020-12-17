@@ -690,3 +690,51 @@ void Entity_get_null_name() {
     auto n = e.name();
     test_assert(n.size() == 0);
 }
+
+void Entity_get_parent() {
+    flecs::world world;
+
+    auto parent1 = world.entity()
+        .add<Position>();
+
+    auto parent2 = world.entity()
+        .add<Velocity>();
+
+    auto parent3 = world.entity()
+        .add<Mass>();
+
+    auto child = world.entity()
+        .add_childof(parent1)
+        .add_childof(parent2)
+        .add_childof(parent3);
+
+    auto p = child.get_parent<Velocity>();
+    test_assert(p.id() != 0);
+    test_assert(p == parent2);
+}
+
+void Entity_get_parent_w_tag() {
+    flecs::world world;
+
+    auto TagA = world.entity();
+    auto TagB = world.entity();
+    auto TagC = world.entity();
+
+    auto parent1 = world.entity()
+        .add(TagA);
+
+    auto parent2 = world.entity()
+        .add(TagB);
+
+    auto parent3 = world.entity()
+        .add(TagC);
+
+    auto child = world.entity()
+        .add_childof(parent1)
+        .add_childof(parent2)
+        .add_childof(parent3);
+
+    auto p = child.get_parent(TagB);
+    test_assert(p.id() != 0);
+    test_assert(p == parent2);
+}

@@ -22,14 +22,6 @@ jobs:
 
     - name: Build Flecs
       run: bake --strict
-
-    - name: Build Flecs (release)
-      run: bake --strict --cfg release
-
-    - name: Build examples
-      run: |
-        bake examples/c --strict
-        bake examples/cpp --strict
          
     - name: Run tests
       run: |
@@ -60,8 +52,74 @@ jobs:
         bake/bake run test\cpp_api
         bake/bake run test\api
         bake/bake run test\collections
+        
+  gcc-warnings:
+    timeout-minutes: 20
+    runs-on: ${{ matrix.os }}
+    env:
+      CC: gcc-${{ matrix.compiler-version }}
+      CXX: g++-${{ matrix.compiler-version }}  
 
-  sanitizer:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        compiler-version: [7, 8, 9, 10]
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install bake               
+      run: |
+        git clone https://github.com/SanderMertens/bake
+        make -C bake/build-$(uname)
+        bake/bake setup
+
+    - name: Build Flecs
+      run: |
+        bake --strict
+        bake --strict --cfg release
+
+    - name: Build examples
+      run: |
+        bake examples/c --strict
+        bake examples/cpp --strict
+        bake examples/c --strict --cfg release
+        bake examples/cpp --strict --cfg release
+
+  clang-warnings:
+    timeout-minutes: 20
+    runs-on: ${{ matrix.os }}
+    env:
+      CC: clang-${{ matrix.compiler-version }}
+      CXX: clang++-${{ matrix.compiler-version }} 
+        
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        compiler-version: [8, 9]
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install bake                
+      run: |
+        git clone https://github.com/SanderMertens/bake
+        make -C bake/build-$(uname)
+        bake/bake setup
+
+    - name: Build Flecs
+      run: |
+        bake --strict
+        bake --strict --cfg release
+
+    - name: Build examples
+      run: |
+        bake examples/c --strict
+        bake examples/cpp --strict
+        bake examples/c --strict --cfg release
+        bake examples/cpp --strict --cfg release
+
+  sanitized:
     timeout-minutes: 20
     runs-on: ${{ matrix.os }}
     strategy:

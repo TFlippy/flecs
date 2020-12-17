@@ -97,14 +97,6 @@ void ecs_component_monitor_register(
     ecs_entity_t component,
     ecs_query_t *query);
 
-void ecs_measure_frame_time(
-    ecs_world_t *world,
-    bool enable);
-
-void ecs_measure_system_time(
-    ecs_world_t *world,
-    bool enable);
-
 void ecs_notify_tables(
     ecs_world_t *world,
     ecs_table_event_t *event);
@@ -572,6 +564,10 @@ size_t ecs_to_size_t(
 /* Convert size_t to ecs_size_t */
 ecs_size_t ecs_from_size_t(
     size_t size);    
+
+/* Get next power of 2 */
+int32_t ecs_next_pow_of_2(
+    int32_t n);
 
 /* Convert 64bit value to ecs_record_t type. ecs_record_t is stored as 64bit int in the
  * entity index */

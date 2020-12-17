@@ -52,6 +52,8 @@ void Entity_force_owned_type(void);
 void Entity_force_owned_type_w_trait(void);
 void Entity_tag_has_size_zero(void);
 void Entity_get_null_name(void);
+void Entity_get_parent(void);
+void Entity_get_parent_w_tag(void);
 
 // Testsuite 'Traits'
 void Traits_add_component_trait(void);
@@ -129,6 +131,7 @@ void System_action_tag(void);
 void System_iter_tag(void);
 void System_each_tag(void);
 void System_system_from_id(void);
+void System_set_interval(void);
 
 // Testsuite 'Trigger'
 void Trigger_on_add(void);
@@ -412,6 +415,14 @@ bake_test_case Entity_testcases[] = {
     {
         "get_null_name",
         Entity_get_null_name
+    },
+    {
+        "get_parent",
+        Entity_get_parent
+    },
+    {
+        "get_parent_w_tag",
+        Entity_get_parent_w_tag
     }
 };
 
@@ -695,6 +706,10 @@ bake_test_case System_testcases[] = {
     {
         "system_from_id",
         System_system_from_id
+    },
+    {
+        "set_interval",
+        System_set_interval
     }
 };
 
@@ -1093,7 +1108,7 @@ static bake_test_suite suites[] = {
         "Entity",
         NULL,
         NULL,
-        43,
+        45,
         Entity_testcases
     },
     {
@@ -1128,7 +1143,7 @@ static bake_test_suite suites[] = {
         "System",
         NULL,
         NULL,
-        19,
+        20,
         System_testcases
     },
     {

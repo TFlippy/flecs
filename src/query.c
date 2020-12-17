@@ -2040,6 +2040,12 @@ ecs_query_t* ecs_subquery_new(
     return result;
 }
 
+ecs_sig_t* ecs_query_get_sig(
+    ecs_query_t *query)
+{
+    return &query->sig;
+}
+
 void ecs_query_free(
     ecs_query_t *query)
 {
@@ -2094,7 +2100,13 @@ ecs_iter_t ecs_query_iter_page(
     ecs_assert(query != NULL, ECS_INVALID_PARAMETER, NULL);
     ecs_assert(!(query->flags & EcsQueryIsOrphaned), ECS_INVALID_PARAMETER, NULL);
 
-    sort_tables(query->world, query);
+    ecs_world_t *world = query->world;
+    
+    sort_tables(world, query);
+
+    if (!world->in_progress && query->flags & EcsQueryHasRefs) {
+        ecs_eval_component_monitors(world);
+    }
 
     tables_reset_dirty(query);
 
@@ -2116,7 +2128,7 @@ ecs_iter_t ecs_query_iter_page(
     };
 
     return (ecs_iter_t){
-        .world = query->world,
+        .world = world,
         .query = query,
         .column_count = ecs_vector_count(query->sig.columns),
         .table_count = table_count,

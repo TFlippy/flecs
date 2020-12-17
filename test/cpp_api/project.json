@@ -57,7 +57,9 @@
                 "force_owned_type",
                 "force_owned_type_w_trait",
                 "tag_has_size_zero",
-                "get_null_name"
+                "get_null_name",
+                "get_parent",
+                "get_parent_w_tag"
             ]
         }, {
             "id": "Traits",
@@ -144,7 +146,8 @@
                 "action_tag",
                 "iter_tag",
                 "each_tag",
-                "system_from_id"
+                "system_from_id",
+                "set_interval"
             ]
         }, {
             "id": "Trigger",

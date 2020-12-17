@@ -933,6 +933,7 @@ void Prefab_instanceof_0(void);
 void Prefab_instantiate_empty_child_table(void);
 void Prefab_instantiate_emptied_child_table(void);
 void Prefab_override_2_prefabs(void);
+void Prefab_rematch_after_add_instanceof_to_parent(void);
 
 // Testsuite 'System_w_FromContainer'
 void System_w_FromContainer_setup(void);
@@ -1005,6 +1006,7 @@ void World_recreate_world_w_component(void);
 void World_no_threading(void);
 void World_no_time(void);
 void World_is_entity_enabled(void);
+void World_get_stats(void);
 
 // Testsuite 'Type'
 void Type_setup(void);
@@ -4879,6 +4881,10 @@ bake_test_case Prefab_testcases[] = {
     {
         "override_2_prefabs",
         Prefab_override_2_prefabs
+    },
+    {
+        "rematch_after_add_instanceof_to_parent",
+        Prefab_rematch_after_add_instanceof_to_parent
     }
 };
 
@@ -5134,6 +5140,10 @@ bake_test_case World_testcases[] = {
     {
         "is_entity_enabled",
         World_is_entity_enabled
+    },
+    {
+        "get_stats",
+        World_get_stats
     }
 };
 
@@ -6967,7 +6977,7 @@ static bake_test_suite suites[] = {
         "Prefab",
         Prefab_setup,
         NULL,
-        72,
+        73,
         Prefab_testcases
     },
     {
@@ -7002,7 +7012,7 @@ static bake_test_suite suites[] = {
         "World",
         World_setup,
         NULL,
-        31,
+        32,
         World_testcases
     },
     {
