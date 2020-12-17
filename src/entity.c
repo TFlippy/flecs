@@ -1761,6 +1761,38 @@ void ecs_delete_children(
     ecs_map_remove(world->child_tables, parent);
 }
 
+int32_t ecs_get_children(ecs_world_t* world, ecs_entity_t parent, ecs_entity_t* children)
+{
+    ecs_vector_t* child_tables = ecs_map_get_ptr(world->child_tables, ecs_vector_t*, parent);
+
+    int32_t num = 0;
+
+    if (child_tables)
+    {
+        ecs_table_t** tables = ecs_vector_first(child_tables, ecs_table_t*);
+        int32_t i, count = ecs_vector_count(child_tables);
+        for (i = 0; i < count; i++)
+        {
+            ecs_table_t* table = tables[i];
+
+            /* Recursively delete entities of children */
+            ecs_data_t* data = ecs_table_get_data(table);
+            if (data)
+            {
+                ecs_entity_t* entities = ecs_vector_first(data->entities, ecs_entity_t);
+
+                int32_t child, child_count = ecs_vector_count(data->entities);
+                for (child = 0; child < child_count; child++)
+                {
+                    children[num++] = entities[child];
+                }
+            }
+        };
+    }
+
+    return num;
+}
+
 void ecs_delete(
     ecs_world_t *world,
     ecs_entity_t entity)

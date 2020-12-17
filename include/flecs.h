@@ -1272,6 +1272,12 @@ void ecs_delete_children(
     ecs_world_t *world,
     ecs_entity_t parent);
 
+FLECS_API
+int32_t ecs_get_children(
+    ecs_world_t* world,
+    ecs_entity_t parent,
+    ecs_entity_t* children);
+
 /** @} */
 
 /**

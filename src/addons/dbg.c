@@ -127,4 +127,12 @@ void ecs_dbg_entity(
     }
 }
 
+void ecs_dbg_get_all_entities(
+    ecs_world_t* world,
+    ecs_dbg_all_entities_t* dbg_out)
+{
+    dbg_out->count = ecs_eis_count(world);
+    dbg_out->ids = ecs_sparse_new_ids(world->store.entity_index, dbg_out->count);
+}
+
 #endif

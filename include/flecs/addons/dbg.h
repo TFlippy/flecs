@@ -17,6 +17,12 @@ typedef struct ecs_dbg_entity_t {
     bool is_watched;
 } ecs_dbg_entity_t;
 
+typedef struct ecs_dbg_all_entities_t
+{
+    ecs_entity_t* ids;
+    int32_t count;
+} ecs_dbg_all_entities_t;
+
 typedef struct ecs_dbg_table_t {
     ecs_table_t *table;
     ecs_type_t type;
@@ -56,6 +62,11 @@ void ecs_dbg_table(
     ecs_world_t *world, 
     ecs_table_t *table, 
     ecs_dbg_table_t *dbg_out);
+
+FLECS_API
+void ecs_dbg_get_all_entities(
+    ecs_world_t* world,
+    ecs_dbg_all_entities_t* dbg_out);
 
 #ifdef __cplusplus
 }
