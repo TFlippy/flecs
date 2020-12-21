@@ -41,7 +41,7 @@ void ecs_switch_set_count(
     int32_t count);
 
 FLECS_API
-void ecs_switch_set_min_count(
+void ecs_switch_ensure(
     ecs_switch_t *sw,
     int32_t count);
 
@@ -65,6 +65,12 @@ FLECS_API
 uint64_t ecs_switch_get(
     const ecs_switch_t *sw,
     int32_t element);
+
+FLECS_API
+void ecs_switch_swap(
+    ecs_switch_t *sw,
+    int32_t elem_1,
+    int32_t elem_2);
 
 FLECS_API
 ecs_vector_t* ecs_switch_values(

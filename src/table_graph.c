@@ -73,6 +73,26 @@ int32_t switch_column_count(
     return count;
 }
 
+/* Count number of bitset columns */
+static
+int32_t bitset_column_count(
+    ecs_table_t *table)
+{
+    int32_t count = 0;
+    ecs_vector_each(table->type, ecs_entity_t, c_ptr, {
+        ecs_entity_t component = *c_ptr;
+
+        if (ECS_HAS_ROLE(component, DISABLED)) {
+            if (!count) {
+                table->bs_column_offset = c_ptr_i;
+            }
+            count ++;
+        }
+    });
+
+    return count;
+}
+
 static
 ecs_type_t entities_to_type(
     ecs_entities_t *entities)
@@ -180,6 +200,10 @@ void init_edges(
             table->flags |= EcsTableHasSwitch;
         }
 
+        if (ECS_HAS_ROLE(e, DISABLED)) {
+            table->flags |= EcsTableHasDisabled;
+        }        
+
         if (ECS_HAS_ROLE(e, CHILDOF)) {
             ecs_entity_t parent = e & ECS_COMPONENT_MASK;
             ecs_assert(!ecs_exists(world, parent) || ecs_is_alive(world, parent), ECS_INTERNAL_ERROR, NULL);
@@ -224,6 +248,7 @@ void init_table(
     table->queries = NULL;
     table->column_count = data_column_count(world, table);
     table->sw_column_count = switch_column_count(table);
+    table->bs_column_count = bitset_column_count(table);
 
     init_edges(world, table);
 }
@@ -541,7 +566,16 @@ ecs_table_t* traverse_remove_hi_edges(
             edge->remove = next;
         }
 
-        if (removed && node != next) removed->array[removed->count ++] = e;
+        bool has_case = ECS_HAS_ROLE(e, CASE);
+        if (removed && (node != next || has_case)) {
+            /* If this is a case, find switch and encode it in added id */
+            if (has_case) {
+                int32_t s_case = ecs_table_switch_from_case(world, node, e);
+                ecs_assert(s_case != -1, ECS_INTERNAL_ERROR, NULL);
+                e = ECS_CASE | ecs_entity_t_comb(e, s_case);
+            }
+            removed->array[removed->count ++] = e; 
+        }        
 
         node = next;        
     }
@@ -583,7 +617,7 @@ ecs_table_t* ecs_table_traverse_remove(
                 edge->remove = next;
             } else {
                 /* If the add edge does not point to self, the table
-                    * does not have the entity in to_remove. */
+                 * does not have the entity in to_remove. */
                 continue;
             }
         }
@@ -673,7 +707,6 @@ ecs_table_t* traverse_add_hi_edges(
                 ecs_assert(s_case != -1, ECS_INTERNAL_ERROR, NULL);
                 e = ECS_CASE | ecs_entity_t_comb(e, s_case);
             }
-
             added->array[added->count ++] = e; 
         }
 

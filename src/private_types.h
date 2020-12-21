@@ -103,13 +103,18 @@ typedef struct ecs_sw_column_t {
     ecs_type_t type;      /**< Switch type */
 } ecs_sw_column_t;
 
+/** A bitset column. */
+typedef struct ecs_bs_column_t {
+    ecs_bitset_t data;   /**< Column data */
+} ecs_bs_column_t;
+
 /** Stage-specific component data */
 struct ecs_data_t {
     ecs_vector_t *entities;      /**< Entity identifiers */
     ecs_vector_t *record_ptrs;   /**< Ptrs to records in main entity index */
     ecs_column_t *columns;       /**< Component columns */
     ecs_sw_column_t *sw_columns; /**< Switch columns */
-    bool marked_dirty;           /**< Was table marked dirty by stage? */  
+    ecs_bs_column_t *bs_columns; /**< Bitset columns */
 };
 
 /** Small footprint data structure for storing data associated with a table. */
@@ -137,10 +142,11 @@ typedef struct ecs_table_leaf_t {
 #define EcsTableHasUnSet            16384u
 #define EcsTableHasMonitors         32768u
 #define EcsTableHasSwitch           65536u
+#define EcsTableHasDisabled         131072u
 
 /* Composite constants */
 #define EcsTableHasLifecycle        (EcsTableHasCtors | EcsTableHasDtors)
-#define EcsTableIsComplex           (EcsTableHasLifecycle | EcsTableHasSwitch)
+#define EcsTableIsComplex           (EcsTableHasLifecycle | EcsTableHasSwitch | EcsTableHasDisabled)
 #define EcsTableHasAddActions       (EcsTableHasBase | EcsTableHasSwitch | EcsTableHasCtors | EcsTableHasOnAdd | EcsTableHasOnSet | EcsTableHasMonitors)
 #define EcsTableHasRemoveActions    (EcsTableHasBase | EcsTableHasDtors | EcsTableHasOnRemove | EcsTableHasUnSet | EcsTableHasMonitors)
 
@@ -186,9 +192,12 @@ struct ecs_table_t {
     uint32_t id;                     /**< Table id in sparse set */
 
     ecs_flags32_t flags;             /**< Flags for testing table properties */
+    
     int32_t column_count;            /**< Number of data columns in table */
     int32_t sw_column_count;
     int32_t sw_column_offset;
+    int32_t bs_column_count;
+    int32_t bs_column_offset;
 };
 
 /* Sparse query column */
@@ -198,10 +207,17 @@ typedef struct ecs_sparse_column_t {
     int32_t signature_column_index;
 } ecs_sparse_column_t;
 
+/* Bitset query column */
+typedef struct ecs_bitset_column_t {
+    ecs_bs_column_t *bs_column;
+    int32_t column_index;
+} ecs_bitset_column_t;
+
 /** Type containing data for a table matched with a query. */
 typedef struct ecs_matched_table_t {
-    ecs_iter_table_t data;         /**< Precomputed data for iterators */
+    ecs_iter_table_t iter_data;    /**< Precomputed data for iterators */
     ecs_vector_t *sparse_columns;  /**< Column ids of sparse columns */
+    ecs_vector_t *bitset_columns;  /**< Column ids with disabled flags */
     int32_t *monitor;              /**< Used to monitor table for changes */
     int32_t rank;                  /**< Rank used to sort tables */
 } ecs_matched_table_t;
@@ -308,7 +324,9 @@ typedef enum ecs_op_kind_t {
     EcsOpMut,
     EcsOpModified,
     EcsOpDelete,
-    EcsOpClear
+    EcsOpClear,
+    EcsOpEnable,
+    EcsOpDisable
 } ecs_op_kind_t;
 
 typedef struct ecs_op_1_t {

@@ -980,6 +980,60 @@ void ecs_sparse_memory(
 #endif
 
 #endif
+#ifndef FLECS_BITSET_H
+#define FLECS_BITSET_H
+
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct ecs_bitset_t {
+    uint64_t *data;
+    int32_t count;
+    ecs_size_t size;
+} ecs_bitset_t;
+
+void ecs_bitset_init(
+    ecs_bitset_t *bs);
+
+void ecs_bitset_deinit(
+    ecs_bitset_t *bs);
+
+void ecs_bitset_addn(
+    ecs_bitset_t *bs,
+    int32_t count);
+
+void ecs_bitset_ensure(
+    ecs_bitset_t *bs,
+    int32_t count);
+
+void ecs_bitset_set(
+    ecs_bitset_t *bs,
+    int32_t elem,
+    bool value);
+
+bool ecs_bitset_get(
+    const ecs_bitset_t *bs,
+    int32_t elem);
+
+int32_t ecs_bitset_count(
+    const ecs_bitset_t *bs);
+
+void ecs_bitset_remove(
+    ecs_bitset_t *bs,
+    int32_t elem);
+
+void ecs_bitset_swap(
+    ecs_bitset_t *bs,
+    int32_t elem_a,
+    int32_t elem_b);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
 #ifndef FLECS_MAP_H
 #define FLECS_MAP_H
 
@@ -1212,7 +1266,7 @@ void ecs_switch_set_count(
     int32_t count);
 
 FLECS_API
-void ecs_switch_set_min_count(
+void ecs_switch_ensure(
     ecs_switch_t *sw,
     int32_t count);
 
@@ -1236,6 +1290,12 @@ FLECS_API
 uint64_t ecs_switch_get(
     const ecs_switch_t *sw,
     int32_t element);
+
+FLECS_API
+void ecs_switch_swap(
+    ecs_switch_t *sw,
+    int32_t elem_1,
+    int32_t elem_2);
 
 FLECS_API
 ecs_vector_t* ecs_switch_values(
@@ -2040,14 +2100,22 @@ typedef struct ecs_filter_iter_t {
     ecs_iter_table_t table;
 } ecs_filter_iter_t;
 
+/** Iterator flags used to quickly select the optimal iterator algorithm */
+typedef enum ecs_query_iter_kind_t {
+    EcsQuerySimpleIter,     /**< No paging, sorting or sparse columns */
+    EcsQueryPagedIter,      /**< Regular iterator with paging */
+    EcsQuerySortedIter,     /**< Sorted iterator */
+    EcsQuerySwitchIter      /**< Switch type iterator */
+} ecs_query_iter_kind_t;
+
 /** Query-iterator specific data */
 typedef struct ecs_query_iter_t {
-    ecs_query_t *query;
     ecs_page_iter_t page_iter;
     int32_t index;
     int32_t sparse_smallest;
     int32_t sparse_first;
-} ecs_query_iter_t;
+    int32_t bitset_first;
+} ecs_query_iter_t;  
 
 /** Query-iterator specific data */
 typedef struct ecs_snapshot_iter_t {
@@ -2059,13 +2127,15 @@ typedef struct ecs_snapshot_iter_t {
 
 /** The ecs_iter_t struct allows applications to iterate tables.
  * Queries and filters, among others, allow an application to iterate entities
- * that match a certain set of components. Because of how data is stored
- * internally, entiites with a given set of components may be stored in multiple
- * consecutive arrays, stored across multiple tables. The ecs_iter_t type
+ * that match a certain set of components. Because of how data is stored 
+ * internally, entities with a given set of components may be stored in multiple
+ * consecutive arrays, stored across multiple tables. The ecs_iter_t type 
  * enables iteration across tables. */
 struct ecs_iter_t {
     ecs_world_t *world;           /**< The world */
+    ecs_world_t *real_world;      /**< Actual world. This differs from world when using threads.  */
     ecs_entity_t system;          /**< The current system (if applicable) */
+    ecs_query_iter_kind_t kind;
 
     ecs_iter_table_t *table;      /**< Table related data */
     ecs_query_t *query;           /**< Current query being evaluated */
@@ -2077,9 +2147,9 @@ struct ecs_iter_t {
     ecs_entity_t *entities;       /**< Entity identifiers */
 
     void *param;                  /**< User data (EcsContext or param argument) */
-    FLECS_FLOAT delta_time;             /**< Time elapsed since last frame */
-    FLECS_FLOAT delta_system_time;      /**< Time elapsed since last system invocation */
-    FLECS_FLOAT world_time;             /**< Time elapsed since start of simulation */
+    FLECS_FLOAT delta_time;       /**< Time elapsed since last frame */
+    FLECS_FLOAT delta_system_time;/**< Time elapsed since last system invocation */
+    FLECS_FLOAT world_time;       /**< Time elapsed since start of simulation */
 
     int32_t frame_offset;         /**< Offset relative to frame */
     int32_t table_offset;         /**< Current active table being processed */
@@ -2730,7 +2800,7 @@ typedef struct EcsComponentLifecycle {
     void *ctx;              /**< User defined context */
 } EcsComponentLifecycle;
 
-/* Component used for registering component triggers */
+/** Component used for registering component triggers */
 typedef struct EcsTrigger {
     ecs_entity_t kind;
     ecs_iter_action_t action;
@@ -2802,6 +2872,9 @@ typedef struct EcsTrigger {
 
 /** Enforce ownership of a component */
 #define ECS_OWNED (ECS_ROLE | ((ecs_entity_t)0x75 << 56))
+
+/** Track whether component is enabled or not */
+#define ECS_DISABLED (ECS_ROLE | ((ecs_entity_t)0x74 << 56))
 
 /** @} */
 
@@ -3640,8 +3713,56 @@ void ecs_add_remove_type(
 #define ecs_add_remove(world, entity, to_add, to_remove)\
     ecs_add_remove_type(world, entity, ecs_type(to_add), ecs_type(to_remove))
 
+/** @} */
+
+
+/**
+ * @defgroup enabling_disabling Enabling & Disabling components.
+ * @{
+ */
+
+/** Enable or disable component.
+ * Enabling or disabling a component does not add or remove a component from an
+ * entity, but prevents it from being matched with queries. This operation can
+ * be useful when a component must be temporarily disabled without destroying
+ * its value. It is also a more performant operation for when an application
+ * needs to add/remove components at high frequency, as enabling/disabling is
+ * cheaper than a regular add or remove.
+ *
+ * @param world The world.
+ * @param entity The entity.
+ * @param component The component.
+ * @param enable True to enable the component, false to disable.
+ */
+FLECS_API void ecs_enable_component_w_entity(
+    ecs_world_t *world,
+    ecs_entity_t entity,
+    ecs_entity_t component,
+    bool enable);
+
+#define ecs_enable_component(world, entity, T, enable)\
+    ecs_enable_component_w_entity(world, entity, ecs_typeid(T), enable)
+
+/** Test if component is enabled.
+ * Test whether a component is currently enabled or disabled. This operation
+ * will return true when the entity has the component and if it has not been
+ * disabled by ecs_enable_component.
+ *
+ * @param world The world.
+ * @param entity The entity.
+ * @param component The component.
+ * @return True if the component is enabled, otherwise false.
+ */
+FLECS_API bool ecs_is_component_enabled_w_entity(
+    ecs_world_t *world,
+    ecs_entity_t entity,
+    ecs_entity_t component);
+
+#define ecs_is_component_enabled(world, entity, T)\
+    ecs_is_component_enabled_w_entity(world, entity, ecs_typeid(T))
 
 /** @} */
+
 
 /**
  * @defgroup traits Traits
@@ -8945,6 +9066,100 @@ public:
      */
     base_type& remove_case(const entity& sw_case) const;
 
+    /** Enable an entity.
+     * Enabled entities are matched with systems and can be searched with
+     * queries.
+     */
+    base_type& enable() const {
+        static_cast<base_type*>(this)->invoke(
+        [](world_t *world, entity_t id) {
+            ecs_enable(world, id, true);
+        });
+        return *static_cast<base_type*>(this);
+    }
+
+    /** Disable an entity.
+     * Disabled entities are not matched with systems and cannot be searched 
+     * with queries, unless explicitly specified in the query expression.
+     */
+    base_type& disable() const {
+        static_cast<base_type*>(this)->invoke(
+        [](world_t *world, entity_t id) {
+            ecs_enable(world, id, true);
+        });
+        return *static_cast<base_type*>(this);
+    }
+
+    /** Enable a component.
+     * This sets the enabled bit for this component. If this is the first time
+     * the component is enabled or disabled, the bitset is added.
+     *
+     * @tparam T The component to enable.
+     */   
+    template<typename T>
+    base_type& enable() const {
+        static_cast<base_type*>(this)->invoke(
+        [](world_t *world, entity_t id) {
+            ecs_enable_component_w_entity(world, id, _::component_info<T>::id(), true);
+        });
+        return *static_cast<base_type*>(this);
+    }  
+
+    /** Disable a component.
+     * This sets the enabled bit for this component. If this is the first time
+     * the component is enabled or disabled, the bitset is added.
+     *
+     * @tparam T The component to enable.
+     */   
+    template<typename T>
+    base_type& disable() const {
+        static_cast<base_type*>(this)->invoke(
+        [](world_t *world, entity_t id) {
+            ecs_enable_component_w_entity(world, id, _::component_info<T>::id(), false);
+        });
+        return *static_cast<base_type*>(this);
+    }  
+
+    /** Enable a component.
+     * See enable<T>.
+     *
+     * @param id The component to enable.
+     */   
+    base_type& enable(flecs::entity_t id) const {
+        static_cast<base_type*>(this)->invoke(
+        [id](world_t *world, entity_t e) {
+            ecs_enable_component_w_entity(world, e, id, true);
+        }); 
+        return *static_cast<base_type*>(this);       
+    }
+
+    /** Disable a component.
+     * See disable<T>.
+     *
+     * @param id The component to disable.
+     */   
+    base_type& disable(flecs::entity_t id) const {
+        static_cast<base_type*>(this)->invoke(
+        [id](world_t *world, entity_t e) {
+            ecs_enable_component_w_entity(world, e, id, false);
+        }); 
+        return *static_cast<base_type*>(this);       
+    }
+
+    /** Enable a component.
+     * See enable<T>.
+     *
+     * @param entity The component to enable.
+     */   
+    base_type& enable(const flecs::entity& entity) const;
+
+    /** Disable a component.
+     * See disable<T>.
+     *
+     * @param entity The component to disable.
+     */   
+    base_type& disable(const flecs::entity& entity) const;
+
     /** Set a component for an entity.
      * This operation overwrites the component value. If the entity did not yet
      * have the component, this operation will add it.
@@ -9362,22 +9577,6 @@ public:
         } else {
             return std::string();
         }
-    }
-
-    /** Enable an entity.
-     * Enabled entities are matched with systems and can be searched with
-     * queries.
-     */
-    void enable() const {
-        ecs_enable(m_world, m_id, true);
-    }
-
-    /** Disable an entity.
-     * Disabled entities are not matched with systems and cannot be searched
-     * with queries, unless explicitly specified in the query expression.
-     */
-    void disable() const {
-        ecs_enable(m_world, m_id, false);
     }
 
     bool enabled() {
@@ -9968,6 +10167,36 @@ public:
      * @return True if the entity has the provided case, false otherwise.
      */
     flecs::entity get_case(flecs::type sw) const;
+
+    /** Test if component is enabled.
+     *
+     * @tparam T The component to test.
+     * @return True if the component is enabled, false if it has been disabled.
+     */
+    template<typename T>
+    bool is_enabled() {
+        return ecs_is_component_enabled_w_entity(
+            m_world, m_id, _::component_info<T>::id(m_world));
+    }
+
+    /** Test if component is enabled.
+     *
+     * @param id The component to test.
+     * @return True if the component is enabled, false if it has been disabled.
+     */
+    bool is_enabled(flecs::entity_t id) {
+        return ecs_is_component_enabled_w_entity(
+            m_world, m_id, id);
+    }
+
+    /** Test if component is enabled.
+     *
+     * @param entity The component to test.
+     * @return True if the component is enabled, false if it has been disabled.
+     */
+    bool is_enabled(const flecs::entity& e) {
+        return is_enabled(e.id());
+    }
 
     /** Get current delta time.
      * Convenience function so system implementations can get delta_time, even
@@ -11892,6 +12121,16 @@ inline typename entity_builder<base>::base_type& entity_builder<base>::add_case(
 template <typename base>
 inline typename entity_builder<base>::base_type& entity_builder<base>::remove_case(const entity& sw_case) const {
     return remove_case(sw_case.id());
+}
+
+template <typename base>
+inline typename entity_builder<base>::base_type& entity_builder<base>::enable(const entity& e) const {
+    return enable(e.id());
+}
+
+template <typename base>
+inline typename entity_builder<base>::base_type& entity_builder<base>::disable(const entity& e) const {
+    return disable(e.id());
 }
 
 inline bool entity::has_switch(flecs::type type) const {

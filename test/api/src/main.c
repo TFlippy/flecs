@@ -103,6 +103,7 @@ void Switch_get_case_set(void);
 void Switch_get_case_change(void);
 void Switch_new_w_type(void);
 void Switch_add_w_type(void);
+void Switch_remove_case(void);
 void Switch_bulk_new_w_type(void);
 void Switch_3_entities_same_case(void);
 void Switch_2_entities_1_change_case(void);
@@ -112,6 +113,7 @@ void Switch_query_1_case_1_type(void);
 void Switch_query_1_case_2_types(void);
 void Switch_query_2_cases_1_type(void);
 void Switch_query_2_cases_2_types(void);
+void Switch_query_after_remove(void);
 void Switch_add_switch_in_stage(void);
 void Switch_add_case_in_stage(void);
 void Switch_change_case_in_stage(void);
@@ -122,6 +124,46 @@ void Switch_empty_entity_has_case(void);
 void Switch_zero_entity_has_case(void);
 void Switch_add_to_entity_w_switch(void);
 void Switch_add_trait_to_entity_w_switch(void);
+void Switch_sort(void);
+
+// Testsuite 'EnabledComponents'
+void EnabledComponents_is_component_enabled(void);
+void EnabledComponents_is_empty_entity_disabled(void);
+void EnabledComponents_is_0_entity_disabled(void);
+void EnabledComponents_is_0_component_disabled(void);
+void EnabledComponents_is_nonexist_component_disabled(void);
+void EnabledComponents_is_enabled_component_enabled(void);
+void EnabledComponents_is_disabled_component_enabled(void);
+void EnabledComponents_has_enabled_component(void);
+void EnabledComponents_is_enabled_after_add(void);
+void EnabledComponents_is_enabled_after_remove(void);
+void EnabledComponents_is_enabled_after_disable(void);
+void EnabledComponents_is_disabled_after_enable(void);
+void EnabledComponents_is_enabled_randomized(void);
+void EnabledComponents_is_enabled_after_add_randomized(void);
+void EnabledComponents_is_enabled_after_randomized_add_randomized(void);
+void EnabledComponents_is_enabled_2(void);
+void EnabledComponents_is_enabled_3(void);
+void EnabledComponents_is_enabled_2_after_add(void);
+void EnabledComponents_is_enabled_3_after_add(void);
+void EnabledComponents_query_disabled(void);
+void EnabledComponents_query_disabled_skip_initial(void);
+void EnabledComponents_query_mod_2(void);
+void EnabledComponents_query_mod_8(void);
+void EnabledComponents_query_mod_64(void);
+void EnabledComponents_query_mod_256(void);
+void EnabledComponents_query_mod_1024(void);
+void EnabledComponents_query_enable_mod_10(void);
+void EnabledComponents_query_mod_2_2_bitsets(void);
+void EnabledComponents_query_mod_8_2_bitsets(void);
+void EnabledComponents_query_mod_64_2_bitsets(void);
+void EnabledComponents_query_mod_256_2_bitsets(void);
+void EnabledComponents_query_mod_1024_2_bitsets(void);
+void EnabledComponents_query_randomized_2_bitsets(void);
+void EnabledComponents_query_randomized_3_bitsets(void);
+void EnabledComponents_query_randomized_4_bitsets(void);
+void EnabledComponents_defer_enable(void);
+void EnabledComponents_sort(void);
 
 // Testsuite 'Remove'
 void Remove_zero(void);
@@ -1098,6 +1140,8 @@ void Type_role_and_str(void);
 void Type_role_or_str(void);
 void Type_role_xor_str(void);
 void Type_role_not_str(void);
+void Type_role_owned_str(void);
+void Type_role_disabled_str(void);
 
 // Testsuite 'Run'
 void Run_setup(void);
@@ -1781,6 +1825,10 @@ bake_test_case Switch_testcases[] = {
         Switch_add_w_type
     },
     {
+        "remove_case",
+        Switch_remove_case
+    },
+    {
         "bulk_new_w_type",
         Switch_bulk_new_w_type
     },
@@ -1815,6 +1863,10 @@ bake_test_case Switch_testcases[] = {
     {
         "query_2_cases_2_types",
         Switch_query_2_cases_2_types
+    },
+    {
+        "query_after_remove",
+        Switch_query_after_remove
     },
     {
         "add_switch_in_stage",
@@ -1855,6 +1907,161 @@ bake_test_case Switch_testcases[] = {
     {
         "add_trait_to_entity_w_switch",
         Switch_add_trait_to_entity_w_switch
+    },
+    {
+        "sort",
+        Switch_sort
+    }
+};
+
+bake_test_case EnabledComponents_testcases[] = {
+    {
+        "is_component_enabled",
+        EnabledComponents_is_component_enabled
+    },
+    {
+        "is_empty_entity_disabled",
+        EnabledComponents_is_empty_entity_disabled
+    },
+    {
+        "is_0_entity_disabled",
+        EnabledComponents_is_0_entity_disabled
+    },
+    {
+        "is_0_component_disabled",
+        EnabledComponents_is_0_component_disabled
+    },
+    {
+        "is_nonexist_component_disabled",
+        EnabledComponents_is_nonexist_component_disabled
+    },
+    {
+        "is_enabled_component_enabled",
+        EnabledComponents_is_enabled_component_enabled
+    },
+    {
+        "is_disabled_component_enabled",
+        EnabledComponents_is_disabled_component_enabled
+    },
+    {
+        "has_enabled_component",
+        EnabledComponents_has_enabled_component
+    },
+    {
+        "is_enabled_after_add",
+        EnabledComponents_is_enabled_after_add
+    },
+    {
+        "is_enabled_after_remove",
+        EnabledComponents_is_enabled_after_remove
+    },
+    {
+        "is_enabled_after_disable",
+        EnabledComponents_is_enabled_after_disable
+    },
+    {
+        "is_disabled_after_enable",
+        EnabledComponents_is_disabled_after_enable
+    },
+    {
+        "is_enabled_randomized",
+        EnabledComponents_is_enabled_randomized
+    },
+    {
+        "is_enabled_after_add_randomized",
+        EnabledComponents_is_enabled_after_add_randomized
+    },
+    {
+        "is_enabled_after_randomized_add_randomized",
+        EnabledComponents_is_enabled_after_randomized_add_randomized
+    },
+    {
+        "is_enabled_2",
+        EnabledComponents_is_enabled_2
+    },
+    {
+        "is_enabled_3",
+        EnabledComponents_is_enabled_3
+    },
+    {
+        "is_enabled_2_after_add",
+        EnabledComponents_is_enabled_2_after_add
+    },
+    {
+        "is_enabled_3_after_add",
+        EnabledComponents_is_enabled_3_after_add
+    },
+    {
+        "query_disabled",
+        EnabledComponents_query_disabled
+    },
+    {
+        "query_disabled_skip_initial",
+        EnabledComponents_query_disabled_skip_initial
+    },
+    {
+        "query_mod_2",
+        EnabledComponents_query_mod_2
+    },
+    {
+        "query_mod_8",
+        EnabledComponents_query_mod_8
+    },
+    {
+        "query_mod_64",
+        EnabledComponents_query_mod_64
+    },
+    {
+        "query_mod_256",
+        EnabledComponents_query_mod_256
+    },
+    {
+        "query_mod_1024",
+        EnabledComponents_query_mod_1024
+    },
+    {
+        "query_enable_mod_10",
+        EnabledComponents_query_enable_mod_10
+    },
+    {
+        "query_mod_2_2_bitsets",
+        EnabledComponents_query_mod_2_2_bitsets
+    },
+    {
+        "query_mod_8_2_bitsets",
+        EnabledComponents_query_mod_8_2_bitsets
+    },
+    {
+        "query_mod_64_2_bitsets",
+        EnabledComponents_query_mod_64_2_bitsets
+    },
+    {
+        "query_mod_256_2_bitsets",
+        EnabledComponents_query_mod_256_2_bitsets
+    },
+    {
+        "query_mod_1024_2_bitsets",
+        EnabledComponents_query_mod_1024_2_bitsets
+    },
+    {
+        "query_randomized_2_bitsets",
+        EnabledComponents_query_randomized_2_bitsets
+    },
+    {
+        "query_randomized_3_bitsets",
+        EnabledComponents_query_randomized_3_bitsets
+    },
+    {
+        "query_randomized_4_bitsets",
+        EnabledComponents_query_randomized_4_bitsets
+    },
+    {
+        "defer_enable",
+        EnabledComponents_defer_enable
+    },
+    {
+        "sort",
+        EnabledComponents_sort
     }
 };
 
@@ -5499,6 +5706,14 @@ bake_test_case Type_testcases[] = {
     {
         "role_not_str",
         Type_role_not_str
+    },
+    {
+        "role_owned_str",
+        Type_role_owned_str
+    },
+    {
+        "role_disabled_str",
+        Type_role_disabled_str
     }
 };
 
@@ -6739,8 +6954,15 @@ static bake_test_suite suites[] = {
         "Switch",
         Switch_setup,
         NULL,
-        26,
+        29,
         Switch_testcases
+    },
+    {
+        "EnabledComponents",
+        NULL,
+        NULL,
+        37,
+        EnabledComponents_testcases
     },
     {
         "Remove",
@@ -7019,7 +7241,7 @@ static bake_test_suite suites[] = {
         "Type",
         Type_setup,
         NULL,
-        88,
+        90,
         Type_testcases
     },
     {
@@ -7117,5 +7339,5 @@ static bake_test_suite suites[] = {
 
 int main(int argc, char *argv[]) {
     ut_init(argv[0]);
-    return bake_test_run("api", argc, argv, suites, 57);
+    return bake_test_run("api", argc, argv, suites, 58);
 }

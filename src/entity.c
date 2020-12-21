@@ -719,34 +719,57 @@ void ecs_components_override(
 }
 
 static
-void ecs_components_switch(
-    ecs_world_t * world,
+void set_switch(
     ecs_data_t * data,
     int32_t row,
-    int32_t count,
-    ecs_entities_t * added)
+    int32_t count,    
+    ecs_entities_t *entities,
+    bool reset)
 {
-    (void)world;
+    ecs_entity_t *array = entities->array;
+    int32_t i, comp_count = entities->count;
 
-    ecs_entity_t *array = added->array;
-    int32_t i, add_count = added->count;
-
-    for (i = 0; i < add_count; i ++) {
+    for (i = 0; i < comp_count; i ++) {
         ecs_entity_t e = array[i];
 
         if (ECS_HAS_ROLE(e, CASE)) {
             e = e & ECS_COMPONENT_MASK;
 
-            ecs_entity_t sw_case = ecs_entity_t_lo(e);
-            ecs_entity_t sw_index = ecs_entity_t_hi(e);
+            ecs_entity_t sw_case = 0;
+            if (!reset) {
+                sw_case = ecs_entity_t_lo(e);
+                ecs_assert(sw_case != 0, ECS_INTERNAL_ERROR, NULL);
+            }
 
+            ecs_entity_t sw_index = ecs_entity_t_hi(e);
             ecs_switch_t *sw = data->sw_columns[sw_index].data;
+            ecs_assert(sw != NULL, ECS_INTERNAL_ERROR, NULL);
+            
             int32_t r;
             for (r = 0; r < count; r ++) {
                 ecs_switch_set(sw, row + r, sw_case);
             }
         }
     }
+}
+
+static
+void ecs_components_switch(
+    ecs_world_t * world,
+    ecs_data_t * data,
+    int32_t row,
+    int32_t count,
+    ecs_entities_t * added,
+    ecs_entities_t * removed)
+{
+    (void)world;
+
+    if (added) {
+        set_switch(data, row, count, added, false);
+    }
+    if (removed) {
+        set_switch(data, row, count, removed, true);
+    } 
 }
 
 static
@@ -825,8 +848,7 @@ void ecs_run_add_actions(
     }
 
     if (table->flags & EcsTableHasSwitch) {
-        ecs_components_switch(
-            world, data, row, count, added);
+        ecs_components_switch(world, data, row, count, added, NULL);
     }
 
     if (table->flags & EcsTableHasOnAdd) {
@@ -942,7 +964,7 @@ int32_t move_entity(
         /* If components were removed, invoke remove actions before deleting */
         if (removed && (src_table->flags & EcsTableHasRemoveActions)) {
             /* If entity was moved, invoke UnSet monitors for each component that
-            * the entity no longer has */
+             * the entity no longer has */
             ecs_run_monitors(world, dst_table, src_table->un_set_all, 
                 dst_row, 1, dst_table->un_set_all);
 
@@ -1087,11 +1109,13 @@ void commit(
         /* If source and destination table are the same no action is needed *
          * However, if a component was added in the process of traversing a
          * table, this suggests that a case switch could have occured. */
-        if (added && added->count && src_table && 
-            src_table->flags & EcsTableHasSwitch) 
+        if (((added && added->count) || (removed && removed->count)) && 
+             src_table && src_table->flags & EcsTableHasSwitch) 
         {
-            ecs_components_switch(world, info->data, info->row, 1, added);
+            ecs_components_switch(
+                world, info->data, info->row, 1, added, removed);
         }
+
         return;
     }
 
@@ -2190,6 +2214,82 @@ ecs_entity_t ecs_get_case(
     return ecs_switch_get(sw, info.row);  
 }
 
+void ecs_enable_component_w_entity(
+    ecs_world_t *world,
+    ecs_entity_t entity,
+    ecs_entity_t component,
+    bool enable)
+{
+    ecs_stage_t *stage = ecs_get_stage(&world);
+
+    if (ecs_defer_enable(
+        world, stage, entity, component, enable))
+    {
+        return;
+    } else {
+        /* Operations invoked by enable/disable should not be deferred */
+        stage->defer --;
+    }
+
+    ecs_entity_info_t info;
+    ecs_get_info(world, entity, &info);
+
+    ecs_entity_t bs_id = (component & ECS_COMPONENT_MASK) | ECS_DISABLED;
+    
+    ecs_table_t *table = info.table;
+    int32_t index = -1;
+    if (table) {
+        index = ecs_type_index_of(table->type, bs_id);
+    }
+
+    if (index == -1) {
+        ecs_add_entity(world, entity, bs_id);
+        ecs_enable_component_w_entity(world, entity, component, enable);
+        return;
+    }
+
+    index -= table->bs_column_offset;
+    ecs_assert(index >= 0, ECS_INTERNAL_ERROR, NULL);
+
+    /* Data cannot be NULl, since entity is stored in the table */
+    ecs_assert(info.data != NULL, ECS_INTERNAL_ERROR, NULL);
+    ecs_bitset_t *bs = &info.data->bs_columns[index].data;
+    ecs_assert(bs != NULL, ECS_INTERNAL_ERROR, NULL);
+
+    ecs_bitset_set(bs, info.row, enable);
+}
+
+bool ecs_is_component_enabled_w_entity(
+    ecs_world_t *world,
+    ecs_entity_t entity,
+    ecs_entity_t component)
+{
+    ecs_entity_info_t info;
+    ecs_table_t *table;
+    if (!ecs_get_info(world, entity, &info) || !(table = info.table)) {
+        return false;
+    }
+
+    ecs_entity_t bs_id = (component & ECS_COMPONENT_MASK) | ECS_DISABLED;
+
+    ecs_type_t type = table->type;
+    int32_t index = ecs_type_index_of(type, bs_id);
+    if (index == -1) {
+        /* If table does not have DISABLED column for component, component is
+         * always enabled, if the entity has it */
+        return ecs_has_entity(world, entity, component);
+    }
+
+    index -= table->bs_column_offset;
+    ecs_assert(index >= 0, ECS_INTERNAL_ERROR, NULL);
+
+    /* Data cannot be NULl, since entity is stored in the table */
+    ecs_assert(info.data != NULL, ECS_INTERNAL_ERROR, NULL);
+    ecs_bitset_t *bs = &info.data->bs_columns[index].data;  
+
+    return ecs_bitset_get(bs, info.row);
+}
+
 bool ecs_has_entity(
     ecs_world_t *world,
     ecs_entity_t entity,
@@ -2452,6 +2552,9 @@ const char* ecs_role_str(
     if (ECS_HAS_ROLE(entity, TRAIT)) {
         return "TRAIT";
     } else
+    if (ECS_HAS_ROLE(entity, DISABLED)) {
+        return "DISABLED";
+    } else    
     if (ECS_HAS_ROLE(entity, XOR)) {
         return "XOR";
     } else
@@ -2660,6 +2763,14 @@ void ecs_defer_flush(
                     ecs_delete(world, e);
                     break;
                 }
+                case EcsOpEnable:
+                    ecs_enable_component_w_entity(
+                        world, e, op->component, true);
+                    break;
+                case EcsOpDisable:
+                    ecs_enable_component_w_entity(
+                        world, e, op->component, false);
+                    break;
                 case EcsOpClear:
                     ecs_clear(world, e);
                     break;

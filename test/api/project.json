@@ -115,6 +115,7 @@
                 "get_case_change",
                 "new_w_type",
                 "add_w_type",
+                "remove_case",
                 "bulk_new_w_type",
                 "3_entities_same_case",
                 "2_entities_1_change_case",
@@ -124,6 +125,7 @@
                 "query_1_case_2_types",
                 "query_2_cases_1_type",
                 "query_2_cases_2_types",
+                "query_after_remove",
                 "add_switch_in_stage",
                 "add_case_in_stage",
                 "change_case_in_stage",
@@ -133,7 +135,49 @@
                 "empty_entity_has_case",
                 "zero_entity_has_case",
                 "add_to_entity_w_switch",
-                "add_trait_to_entity_w_switch"
+                "add_trait_to_entity_w_switch",
+                "sort"
+            ]
+        }, {
+            "id": "EnabledComponents",
+            "testcases": [
+                "is_component_enabled",
+                "is_empty_entity_disabled",
+                "is_0_entity_disabled",
+                "is_0_component_disabled",
+                "is_nonexist_component_disabled",
+                "is_enabled_component_enabled",
+                "is_disabled_component_enabled",
+                "has_enabled_component",
+                "is_enabled_after_add",
+                "is_enabled_after_remove",
+                "is_enabled_after_disable",
+                "is_disabled_after_enable",
+                "is_enabled_randomized",
+                "is_enabled_after_add_randomized",
+                "is_enabled_after_randomized_add_randomized",
+                "is_enabled_2",
+                "is_enabled_3",
+                "is_enabled_2_after_add",
+                "is_enabled_3_after_add",
+                "query_disabled",
+                "query_disabled_skip_initial",
+                "query_mod_2",
+                "query_mod_8",
+                "query_mod_64",
+                "query_mod_256",
+                "query_mod_1024",
+                "query_enable_mod_10",
+                "query_mod_2_2_bitsets",
+                "query_mod_8_2_bitsets",
+                "query_mod_64_2_bitsets",
+                "query_mod_256_2_bitsets",
+                "query_mod_1024_2_bitsets",
+                "query_randomized_2_bitsets",
+                "query_randomized_3_bitsets",
+                "query_randomized_4_bitsets",
+                "defer_enable",
+                "sort"
             ]
         }, {
             "id": "Remove",
@@ -1189,7 +1233,9 @@
                 "role_and_str",
                 "role_or_str",
                 "role_xor_str",
-                "role_not_str"
+                "role_not_str",
+                "role_owned_str",
+                "role_disabled_str"
             ]
         }, {
             "id": "Run",
