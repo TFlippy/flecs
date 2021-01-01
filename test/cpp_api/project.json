@@ -180,7 +180,10 @@
                 "subquery_w_expr",
                 "query_single_trait",
                 "tag_w_each",
-                "shared_tag_w_each"
+                "shared_tag_w_each",
+                "sort_by",
+                "changed",
+                "orphaned"
             ]
         }, {
             "id": "ComponentLifecycle",
@@ -197,7 +200,8 @@
                 "get_mut_existing",
                 "pod_component",
                 "relocatable_component",
-                "implicit_component"
+                "implicit_component",
+                "implicit_after_query"
             ]
         }, {
             "id": "Refs",

@@ -484,6 +484,7 @@ void ecs_table_notify(
     ecs_table_event_t *event);
 
 void ecs_table_clear_edges(
+    ecs_world_t *world,
     ecs_table_t *table);
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -551,6 +552,11 @@ void ecs_increase_timer_resolution(
 ////////////////////////////////////////////////////////////////////////////////
 //// Utilities
 ////////////////////////////////////////////////////////////////////////////////
+
+void ecs_hash(
+    const void *data,
+    ecs_size_t length,
+    uint64_t *result);
 
 /* Convert 64 bit signed integer to 16 bit */
 int8_t ecs_to_i8(

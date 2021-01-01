@@ -170,22 +170,22 @@ typedef struct ecs_matched_query_t {
 /** A table is the Flecs equivalent of an archetype. Tables store all entities
  * with a specific set of components. Tables are automatically created when an
  * entity has a set of components not previously observed before. When a new
- * table is created, it is automatically matched with existing column systems */
+ * table is created, it is automatically matched with existing queries */
 struct ecs_table_t {
     ecs_type_t type;                 /**< Identifies table type in type_index */
     ecs_c_info_t **c_info;           /**< Cached pointers to component info */
 
-    ecs_edge_t *lo_edges;            /**< Edges to low entity ids */
-    ecs_map_t *hi_edges;             /**< Edges to high entity ids */
+    ecs_edge_t *lo_edges;            /**< Edges to other tables */
+    ecs_map_t *hi_edges;
 
-    ecs_data_t *data;                /**< Data storage */
+    ecs_data_t *data;                /**< Component storage */
 
     ecs_vector_t *queries;           /**< Queries matched with table */
     ecs_vector_t *monitors;          /**< Monitor systems matched with table */
     ecs_vector_t **on_set;           /**< OnSet systems, broken up by column */
     ecs_vector_t *on_set_all;        /**< All OnSet systems */
     ecs_vector_t *on_set_override;   /**< All OnSet systems with overrides */
-    ecs_vector_t *un_set_all;        /**< All OnSet systems */
+    ecs_vector_t *un_set_all;        /**< All UnSet systems */
 
     int32_t *dirty_state;            /**< Keep track of changes in columns */
     int32_t alloc_count;             /**< Increases when columns are reallocd */
@@ -221,6 +221,24 @@ typedef struct ecs_matched_table_t {
     int32_t *monitor;              /**< Used to monitor table for changes */
     int32_t rank;                  /**< Rank used to sort tables */
 } ecs_matched_table_t;
+
+/** Type used to track location of table in queries' table lists.
+ * When a table becomes empty or non-empty a signal is sent to a query, which
+ * moves the table to or from an empty list. While this ensures that when 
+ * iterating no time is spent on iterating over empty tables, doing a linear
+ * search for the table in either list can take a significant amount of time if
+ * a query is matched with many tables.
+ *
+ * To avoid a linear search, the query has a map with table indices that can
+ * return the location of the table in either list in constant time.
+ *
+ * If a table is matched multiple times by a query, such as can happen when a
+ * query matches traits, a table can occupy multiple indices.
+ */
+typedef struct ecs_table_indices_t {
+    int32_t *indices; /* If indices are negative, table is in empty list */
+    int32_t count;
+} ecs_table_indices_t;
 
 /** Type storing an entity range within a table.
  * This type is used for iterating in orer across archetypes. A sorting function
@@ -275,6 +293,7 @@ struct ecs_query_t {
     /* Tables matched with query */
     ecs_vector_t *tables;
     ecs_vector_t *empty_tables;
+    ecs_map_t *table_indices;
 
     /* Handle to system (optional) */
     ecs_entity_t system;   
@@ -298,6 +317,7 @@ struct ecs_query_t {
     int32_t cascade_by;         /* Identify CASCADE column */
     int32_t match_count;        /* How often have tables been (un)matched */
     int32_t prev_match_count;   /* Used to track if sorting is needed */
+    bool needs_reorder;         /* Whether next iteration should reorder */
 };
 
 /** Keep track of how many [in] columns are active for [out] columns of OnDemand
@@ -400,6 +420,9 @@ typedef struct ecs_store_t {
     /* Table graph */
     ecs_sparse_t *tables;
     ecs_table_t root;
+
+    /* Lookup map for tables */
+    ecs_map_t *table_map;
 } ecs_store_t;
 
 /** Supporting type to store looked up or derived entity data */

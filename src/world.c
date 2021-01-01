@@ -112,6 +112,9 @@ void init_store(ecs_world_t *world) {
     /* Initialize root table */
     world->store.tables = ecs_sparse_new(ecs_table_t);
 
+    /* Initialize table map */
+    world->store.table_map = ecs_map_new(ecs_vector_t*, 8);
+
     /* Initialize one root table per stage */
     ecs_init_root_table(world);
 }
@@ -139,6 +142,14 @@ void fini_store(ecs_world_t *world) {
     ecs_sparse_free(world->store.tables);
     ecs_table_free(world, &world->store.root);
     ecs_sparse_free(world->store.entity_index);
+
+    ecs_map_iter_t it = ecs_map_iter(world->store.table_map);
+    ecs_vector_t *tables;
+    while ((tables = ecs_map_next_ptr(&it, ecs_vector_t*, NULL))) {
+        ecs_vector_free(tables);
+    }
+    
+    ecs_map_free(world->store.table_map);
 }
 
 /* -- Public functions -- */

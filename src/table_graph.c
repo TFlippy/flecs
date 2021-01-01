@@ -132,6 +132,24 @@ void register_child_table(
 }
 
 static
+ecs_edge_t* get_edge(
+    ecs_table_t *node,
+    ecs_entity_t e)
+{
+    if (e < ECS_HI_COMPONENT_ID) {
+        if (!node->lo_edges) {
+            node->lo_edges = ecs_os_calloc(sizeof(ecs_edge_t) * ECS_HI_COMPONENT_ID);
+        }
+        return &node->lo_edges[e];
+    } else {
+        if (!node->hi_edges) {
+            node->hi_edges = ecs_map_new(ecs_edge_t, 1);
+        }
+        return ecs_map_ensure(node->hi_edges, ecs_edge_t, e);
+    }
+}
+
+static
 void init_edges(
     ecs_world_t * world,
     ecs_table_t * table)
@@ -139,32 +157,20 @@ void init_edges(
     ecs_entity_t *entities = ecs_vector_first(table->type, ecs_entity_t);
     int32_t count = ecs_vector_count(table->type);
 
-    table->lo_edges = ecs_os_calloc(sizeof(ecs_edge_t) * ECS_HI_COMPONENT_ID);
-    table->hi_edges = ecs_map_new(ecs_edge_t, 0);
-
-    table->lo_edges[0].add = table;
+    table->lo_edges = NULL;
+    table->hi_edges = NULL;
     
     /* Make add edges to own components point to self */
     int32_t i;
     for (i = 0; i < count; i ++) {
         ecs_entity_t e = entities[i];
 
-        if (e >= ECS_HI_COMPONENT_ID) {
-            ecs_edge_t edge = { .add = table };
+        ecs_edge_t *edge = get_edge(table, e);
+        ecs_assert(edge != NULL, ECS_INTERNAL_ERROR, NULL);
+        edge->add = table;
 
-            if (count == 1) {
-                edge.remove = &world->store.root;
-            }
-
-            ecs_map_set(table->hi_edges, e, &edge);
-        } else {
-            table->lo_edges[e].add = table;
-
-            if (count == 1) {
-                table->lo_edges[e].remove = &world->store.root;
-            } else {
-                table->lo_edges[e].remove = NULL;
-            }
+        if (count == 1) {
+            edge->remove = &world->store.root;
         }
 
         /* As we're iterating over the table components, also set the table
@@ -256,7 +262,8 @@ void init_table(
 static
 ecs_table_t *create_table(
     ecs_world_t * world,
-    ecs_entities_t * entities)
+    ecs_entities_t * entities,
+    uint64_t hash)
 {
     ecs_table_t *result = ecs_sparse_add(world->store.tables, ecs_table_t);
     result->id = ecs_to_u32(ecs_sparse_last_id(world->store.tables));
@@ -270,6 +277,12 @@ ecs_table_t *create_table(
     ecs_os_free(expr);
 #endif
     ecs_log_push();
+
+    /* Store table in lookup map */
+    ecs_vector_t *tables = ecs_map_get_ptr(world->store.table_map, ecs_vector_t*, hash);
+    ecs_table_t **elem = ecs_vector_add(&tables, ecs_table_t*);
+    *elem = result;
+    ecs_map_set(world->store.table_map, hash, &tables);
 
     ecs_notify_queries(world, &(ecs_query_event_t) {
         .kind = EcsQueryTableMatch,
@@ -337,28 +350,6 @@ void remove_entity_from_type(
     }
 
     out->count = el;
-}
-
-static
-ecs_edge_t* get_edge(
-    ecs_table_t *node,
-    ecs_entity_t e)
-{
-    ecs_edge_t *edge;
-
-    if (e < ECS_HI_COMPONENT_ID) {
-        edge = &node->lo_edges[e];
-    } else {
-        edge = ecs_map_get(node->hi_edges, ecs_edge_t, e);        
-        if (!edge) {
-            ecs_edge_t new_edge = {0};
-            ecs_map_set(node->hi_edges, e, &new_edge);
-            edge = ecs_map_get(node->hi_edges, ecs_edge_t, e);    
-            ecs_assert(edge != NULL, ECS_INTERNAL_ERROR, NULL);
-        }
-    }
-
-    return edge;
 }
 
 static
@@ -536,53 +527,6 @@ ecs_table_t *find_or_create_table_exclude(
     return result;    
 }
 
-static
-ecs_table_t* traverse_remove_hi_edges(
-    ecs_world_t * world,
-    ecs_table_t * node,
-    int32_t i,
-    ecs_entities_t * to_remove,
-    ecs_entities_t * removed)
-{
-    int32_t count = to_remove->count;
-    ecs_entity_t *entities = to_remove->array;
-
-    for (; i < count; i ++) {
-        ecs_entity_t e = entities[i];
-        ecs_entity_t next_e = e;
-        ecs_table_t *next;
-        ecs_edge_t *edge;
-
-        edge = get_edge(node, e);
-
-        next = edge->remove;
-
-        if (!next) {
-            next = find_or_create_table_exclude(world, node, next_e);
-            if (!next) {
-                return NULL;
-            }
-
-            edge->remove = next;
-        }
-
-        bool has_case = ECS_HAS_ROLE(e, CASE);
-        if (removed && (node != next || has_case)) {
-            /* If this is a case, find switch and encode it in added id */
-            if (has_case) {
-                int32_t s_case = ecs_table_switch_from_case(world, node, e);
-                ecs_assert(s_case != -1, ECS_INTERNAL_ERROR, NULL);
-                e = ECS_CASE | ecs_entity_t_comb(e, s_case);
-            }
-            removed->array[removed->count ++] = e; 
-        }        
-
-        node = next;        
-    }
-
-    return node;
-}
-
 ecs_table_t* ecs_table_traverse_remove(
     ecs_world_t * world,
     ecs_table_t * node,
@@ -596,14 +540,10 @@ ecs_table_t* ecs_table_traverse_remove(
     for (i = 0; i < count; i ++) {
         ecs_entity_t e = entities[i];
 
-        /* If the array is not a simple component array, use a function that
-         * handles all cases, but is slower */
-        if (e >= ECS_HI_COMPONENT_ID) {
-            return traverse_remove_hi_edges(world, node, i, to_remove, 
-                removed);
-        }
+        /* Removing 0 from an entity is not valid */
+        ecs_assert(e != 0, ECS_INVALID_PARAMETER, NULL);
 
-        ecs_edge_t *edge = &node->lo_edges[e];
+        ecs_edge_t *edge = get_edge(node, e);
         ecs_table_t *next = edge->remove;
 
         if (!next) {
@@ -622,7 +562,16 @@ ecs_table_t* ecs_table_traverse_remove(
             }
         }
 
-        if (removed) removed->array[removed->count ++] = e;
+        bool has_case = ECS_HAS_ROLE(e, CASE);
+        if (removed && (node != next || has_case)) {
+            /* If this is a case, find switch and encode it in added id */
+            if (has_case) {
+                int32_t s_case = ecs_table_switch_from_case(world, node, e);
+                ecs_assert(s_case != -1, ECS_INTERNAL_ERROR, NULL);
+                e = ECS_CASE | ecs_entity_t_comb(e, s_case);
+            }
+            removed->array[removed->count ++] = e; 
+        }
 
         node = next;
     }    
@@ -667,34 +616,33 @@ void find_owned_components(
     }
 }
 
-static
-ecs_table_t* traverse_add_hi_edges(
+ecs_table_t* ecs_table_traverse_add(
     ecs_world_t * world,
     ecs_table_t * node,
-    int32_t i,
     ecs_entities_t * to_add,
-    ecs_entities_t * added)
+    ecs_entities_t * added)    
 {
-    int32_t count = to_add->count;
+    int32_t i, count = to_add->count;
     ecs_entity_t *entities = to_add->array;
+    node = node ? node : &world->store.root;
 
     ecs_entity_t owned_array[ECS_MAX_ADD_REMOVE];
     ecs_entities_t owned = {
         .array = owned_array,
         .count = 0
-    };
+    };    
 
-    for (; i < count; i ++) {
+    for (i = 0; i < count; i ++) {
         ecs_entity_t e = entities[i];
-        ecs_entity_t next_e = e;
-        ecs_table_t *next;
-        ecs_edge_t *edge;
 
-        edge = get_edge(node, e);
-        next = edge->add;
+        /* Adding 0 to an entity is not valid */
+        ecs_assert(e != 0, ECS_INVALID_PARAMETER, NULL);
+
+        ecs_edge_t *edge = get_edge(node, e);
+        ecs_table_t *next = edge->add;
 
         if (!next) {
-            next = find_or_create_table_include(world, node, next_e);
+            next = find_or_create_table_include(world, node, e);
             ecs_assert(next != NULL, ECS_INTERNAL_ERROR, NULL);
             edge->add = next;
         }
@@ -712,7 +660,7 @@ ecs_table_t* traverse_add_hi_edges(
 
         if ((node != next) && ECS_HAS_ROLE(e, INSTANCEOF)) {
             find_owned_components(world, next, ECS_COMPONENT_MASK & e, &owned);
-        } 
+        }        
 
         node = next;
     }
@@ -720,46 +668,6 @@ ecs_table_t* traverse_add_hi_edges(
     /* In case OWNED components were found, add them as well */
     if (owned.count) {
         node = ecs_table_traverse_add(world, node, &owned, added);
-    }
-
-    return node;
-}
-
-ecs_table_t* ecs_table_traverse_add(
-    ecs_world_t * world,
-    ecs_table_t * node,
-    ecs_entities_t * to_add,
-    ecs_entities_t * added)    
-{
-    int32_t i, count = to_add->count;
-    ecs_entity_t *entities = to_add->array;
-    node = node ? node : &world->store.root;
-
-    for (i = 0; i < count; i ++) {
-        ecs_entity_t e = entities[i];
-        ecs_table_t *next;
-
-        /* If the array is not a simple component array, use a function that
-         * handles all cases, but is slower */
-        if (e >= ECS_HI_COMPONENT_ID) {
-            return traverse_add_hi_edges(world, node, i, to_add, added);
-        }
-
-        /* There should always be an edge for adding */
-        ecs_edge_t *edge = &node->lo_edges[e];
-        next = edge->add;
-
-        if (!next) {
-            next = find_or_create_table_include(world, node, e);
-            ecs_assert(next != NULL, ECS_INTERNAL_ERROR, NULL);
-            edge->add = next;
-        }
-
-        if (added && node != next) {
-            added->array[added->count ++] = e;
-        }
-
-        node = next;
     }
 
     return node;
@@ -908,32 +816,50 @@ ecs_table_t *find_or_create(
         ecs_size_t size = ECS_SIZEOF(ecs_entity_t) * type_count;
         ordered = ecs_os_alloca(size);
         ecs_os_memcpy(ordered, entities->array, size);
-        qsort(ordered, (size_t)type_count, sizeof(ecs_entity_t), ecs_entity_compare);
+        qsort(
+            ordered, (size_t)type_count, sizeof(ecs_entity_t), ecs_entity_compare);
         type_count = ecs_entity_array_dedup(ordered, type_count);
     } else {
         ordered = entities->array;
-    }    
+    }
 
-    /* Iterate tables, look if a table matches the type */
-    ecs_sparse_t *tables = world->store.tables;
-    int32_t i, count = ecs_sparse_count(tables);
-    for (i = 0; i < count; i ++) {
-        ecs_table_t *table = ecs_sparse_get(tables, ecs_table_t, i);
-        ecs_type_t type = table->type;
-        int32_t table_type_count = ecs_vector_count(type);
+    uint64_t hash = 0;
+    ecs_hash(ordered, entities->count * ECS_SIZEOF(ecs_entity_t), &hash);
+    ecs_vector_t *table_vec = ecs_map_get_ptr(
+        world->store.table_map, ecs_vector_t*, hash);
+    if (table_vec) {
+        /* Usually this will be just one, but in the case of a collision
+         * multiple tables can be stored using the same hash. */
+        int32_t i, count = ecs_vector_count(table_vec);
+        ecs_table_t *table, **tables = ecs_vector_first(
+            table_vec, ecs_table_t*);
 
-        /* If types do not contain same number of entities, table won't match */
-        if (table_type_count != type_count) {
-            continue;
+        for (i = 0; i < count; i ++) {
+            table = tables[i];
+            int32_t t, table_type_count = ecs_vector_count(table->type);
+
+            /* If number of components in table doesn't match, it's definitely
+             * a collision. */
+            if (table_type_count != type_count) {
+                table = NULL;
+                continue;
+            }
+
+            /* Check if components of table match */
+            ecs_entity_t *table_type = ecs_vector_first(
+                table->type, ecs_entity_t);
+            for (t = 0; t < type_count; t ++) {
+                if (table_type[t] != ordered[t]) {
+                    table = NULL;
+                    break;
+                }
+            }
+
+            if (table) {
+                return table;
+            }
         }
-
-        /* Memcmp the types, as they must match exactly */
-        ecs_entity_t *type_array = ecs_vector_first(type, ecs_entity_t);
-        if (!ecs_os_memcmp(ordered, type_array, type_count * ECS_SIZEOF(ecs_entity_t))) {
-            /* Table found */
-            return table;
-        }
-    }  
+    }
 
     ecs_entities_t ordered_entities = {
         .array = ordered,
@@ -945,10 +871,9 @@ ecs_table_t *find_or_create(
     verify_constraints(world, &ordered_entities);
 #endif
 
-    /* If we get here, the table has not been found. It has to be created. */
+    /* If we get here, the table has not been found, so create it. */
+    ecs_table_t *result = create_table(world, &ordered_entities, hash);
     
-    ecs_table_t *result = create_table(world, &ordered_entities);
-
     ecs_assert(ordered_entities.count == ecs_vector_count(result->type), 
         ECS_INTERNAL_ERROR, NULL);
 
@@ -986,17 +911,23 @@ void ecs_init_root_table(
 }
 
 void ecs_table_clear_edges(
+    ecs_world_t *world,
     ecs_table_t *table)
 {
+    (void)world;
+
     uint32_t i;
-    for (i = 0; i < ECS_HI_COMPONENT_ID; i ++) {
-        ecs_edge_t *e = &table->lo_edges[i];
-        ecs_table_t *add = e->add, *remove = e->remove;
-        if (add) {
-            add->lo_edges[i].remove = NULL;
-        }
-        if (remove) {
-            remove->lo_edges[i].add = NULL;
+
+    if (table->lo_edges) {
+        for (i = 0; i < ECS_HI_COMPONENT_ID; i ++) {
+            ecs_edge_t *e = &table->lo_edges[i];
+            ecs_table_t *add = e->add, *remove = e->remove;
+            if (add) {
+                add->lo_edges[i].remove = NULL;
+            }
+            if (remove) {
+                remove->lo_edges[i].add = NULL;
+            }
         }
     }
 

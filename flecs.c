@@ -204,22 +204,22 @@ typedef struct ecs_matched_query_t {
 /** A table is the Flecs equivalent of an archetype. Tables store all entities
  * with a specific set of components. Tables are automatically created when an
  * entity has a set of components not previously observed before. When a new
- * table is created, it is automatically matched with existing column systems */
+ * table is created, it is automatically matched with existing queries */
 struct ecs_table_t {
     ecs_type_t type;                 /**< Identifies table type in type_index */
     ecs_c_info_t **c_info;           /**< Cached pointers to component info */
 
-    ecs_edge_t *lo_edges;            /**< Edges to low entity ids */
-    ecs_map_t *hi_edges;             /**< Edges to high entity ids */
+    ecs_edge_t *lo_edges;            /**< Edges to other tables */
+    ecs_map_t *hi_edges;
 
-    ecs_data_t *data;                /**< Data storage */
+    ecs_data_t *data;                /**< Component storage */
 
     ecs_vector_t *queries;           /**< Queries matched with table */
     ecs_vector_t *monitors;          /**< Monitor systems matched with table */
     ecs_vector_t **on_set;           /**< OnSet systems, broken up by column */
     ecs_vector_t *on_set_all;        /**< All OnSet systems */
     ecs_vector_t *on_set_override;   /**< All OnSet systems with overrides */
-    ecs_vector_t *un_set_all;        /**< All OnSet systems */
+    ecs_vector_t *un_set_all;        /**< All UnSet systems */
 
     int32_t *dirty_state;            /**< Keep track of changes in columns */
     int32_t alloc_count;             /**< Increases when columns are reallocd */
@@ -255,6 +255,24 @@ typedef struct ecs_matched_table_t {
     int32_t *monitor;              /**< Used to monitor table for changes */
     int32_t rank;                  /**< Rank used to sort tables */
 } ecs_matched_table_t;
+
+/** Type used to track location of table in queries' table lists.
+ * When a table becomes empty or non-empty a signal is sent to a query, which
+ * moves the table to or from an empty list. While this ensures that when 
+ * iterating no time is spent on iterating over empty tables, doing a linear
+ * search for the table in either list can take a significant amount of time if
+ * a query is matched with many tables.
+ *
+ * To avoid a linear search, the query has a map with table indices that can
+ * return the location of the table in either list in constant time.
+ *
+ * If a table is matched multiple times by a query, such as can happen when a
+ * query matches traits, a table can occupy multiple indices.
+ */
+typedef struct ecs_table_indices_t {
+    int32_t *indices; /* If indices are negative, table is in empty list */
+    int32_t count;
+} ecs_table_indices_t;
 
 /** Type storing an entity range within a table.
  * This type is used for iterating in orer across archetypes. A sorting function
@@ -309,6 +327,7 @@ struct ecs_query_t {
     /* Tables matched with query */
     ecs_vector_t *tables;
     ecs_vector_t *empty_tables;
+    ecs_map_t *table_indices;
 
     /* Handle to system (optional) */
     ecs_entity_t system;   
@@ -332,6 +351,7 @@ struct ecs_query_t {
     int32_t cascade_by;         /* Identify CASCADE column */
     int32_t match_count;        /* How often have tables been (un)matched */
     int32_t prev_match_count;   /* Used to track if sorting is needed */
+    bool needs_reorder;         /* Whether next iteration should reorder */
 };
 
 /** Keep track of how many [in] columns are active for [out] columns of OnDemand
@@ -434,6 +454,9 @@ typedef struct ecs_store_t {
     /* Table graph */
     ecs_sparse_t *tables;
     ecs_table_t root;
+
+    /* Lookup map for tables */
+    ecs_map_t *table_map;
 } ecs_store_t;
 
 /** Supporting type to store looked up or derived entity data */
@@ -1104,6 +1127,7 @@ void ecs_table_notify(
     ecs_table_event_t *event);
 
 void ecs_table_clear_edges(
+    ecs_world_t *world,
     ecs_table_t *table);
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1171,6 +1195,11 @@ void ecs_increase_timer_resolution(
 ////////////////////////////////////////////////////////////////////////////////
 //// Utilities
 ////////////////////////////////////////////////////////////////////////////////
+
+void ecs_hash(
+    const void *data,
+    ecs_size_t length,
+    uint64_t *result);
 
 /* Convert 64 bit signed integer to 16 bit */
 int8_t ecs_to_i8(
@@ -2402,8 +2431,8 @@ void ecs_table_free(
     }
 
     ecs_table_clear_data(table, table->data);
-    ecs_table_clear_edges(table);
-    
+    ecs_table_clear_edges(world, table);
+
     ecs_os_free(table->lo_edges);
     ecs_map_free(table->hi_edges);
     ecs_vector_free(table->queries);
@@ -2437,11 +2466,10 @@ void ecs_table_reset(
     ecs_table_t * table)
 {
     (void)world;
-
-    if (table->lo_edges) {
-        memset(table->lo_edges, 0, ECS_SIZEOF(ecs_edge_t) * ECS_HI_COMPONENT_ID);
-        ecs_map_clear(table->hi_edges);
-    }
+    ecs_os_free(table->lo_edges);
+    ecs_map_free(table->hi_edges);
+    table->lo_edges = NULL;
+    table->hi_edges = NULL;
 }
 
 static
@@ -2819,6 +2847,7 @@ int32_t ecs_table_append(
     ecs_column_t *columns = NULL;
     ecs_sw_column_t *sw_columns = NULL;
     ecs_bs_column_t *bs_columns = NULL;
+
     ensure_data(world, table, data, &column_count, &sw_column_count,
         &bs_column_count, &columns, &sw_columns, &bs_columns);
 
@@ -2843,7 +2872,7 @@ int32_t ecs_table_append(
      * table moves from an inactive table to an active table. */
     if (!world->in_progress && !count) {
         ecs_table_activate(world, table, 0, true);
-    }
+    } 
 
     ecs_assert(count >= 0, ECS_INTERNAL_ERROR, NULL);
 
@@ -4287,11 +4316,11 @@ void instantiate_children(
 
         /* Find or create table */
         ecs_table_t *i_table = ecs_table_find_or_create(world, &components);
-        ecs_assert(i_table != NULL, ECS_INTERNAL_ERROR, NULL);
+        ecs_assert(i_table != NULL, ECS_INTERNAL_ERROR, NULL); 
 
         /* Create children */
         int32_t child_row; 
-        new_w_data(world, i_table, NULL, child_count, c_info, &child_row);
+        new_w_data(world, i_table, NULL, child_count, c_info, &child_row);       
 
         /* If prefab child table has children itself, recursively instantiate */
         ecs_data_t *i_data = ecs_table_get_data(i_table);
@@ -4302,7 +4331,7 @@ void instantiate_children(
             ecs_entity_t child = children[j];
             instantiate(world, child, i_table, i_data, child_row + j, 1);
         }
-    }    
+    }       
 }
 
 static
@@ -4315,6 +4344,7 @@ void instantiate(
     int32_t count)
 {    
     /* If base is a parent, instantiate children of base for instances */
+
     ecs_vector_t *child_tables = ecs_map_get_ptr(
         world->child_tables, ecs_vector_t*, base);
 
@@ -4895,7 +4925,7 @@ void commit(
         }
 
         return;
-    }
+    }  
 
     if (src_table) {
         ecs_data_t *src_data = info->data;
@@ -4919,7 +4949,7 @@ void commit(
             info->row = new_entity(world, entity, info, dst_table, added);
             info->table = dst_table;
         }        
-    } 
+    }
 
     /* If the entity is being watched, it is being monitored for changes and
     * requires rematching systems when components are added or removed. This
@@ -4991,7 +5021,7 @@ const ecs_entity_t* new_w_data(
     int32_t sparse_count = ecs_eis_count(world);
     const ecs_entity_t *ids = ecs_sparse_new_ids(world->store.entity_index, count);
     ecs_assert(ids != NULL, ECS_INTERNAL_ERROR, NULL);
-    ecs_type_t type = table->type;
+    ecs_type_t type = table->type;   
 
     if (!type) {
         return ids;        
@@ -6534,7 +6564,7 @@ void ecs_defer_flush(
 
                 if (op->is._1.value) {
                     ecs_os_free(op->is._1.value);
-                }
+                }                  
             };
 
             if (defer_queue != stage->defer_merge_queue) {
@@ -10945,6 +10975,9 @@ void init_store(ecs_world_t *world) {
     /* Initialize root table */
     world->store.tables = ecs_sparse_new(ecs_table_t);
 
+    /* Initialize table map */
+    world->store.table_map = ecs_map_new(ecs_vector_t*, 8);
+
     /* Initialize one root table per stage */
     ecs_init_root_table(world);
 }
@@ -10972,6 +11005,14 @@ void fini_store(ecs_world_t *world) {
     ecs_sparse_free(world->store.tables);
     ecs_table_free(world, &world->store.root);
     ecs_sparse_free(world->store.entity_index);
+
+    ecs_map_iter_t it = ecs_map_iter(world->store.table_map);
+    ecs_vector_t *tables;
+    while ((tables = ecs_map_next_ptr(&it, ecs_vector_t*, NULL))) {
+        ecs_vector_free(tables);
+    }
+    
+    ecs_map_free(world->store.table_map);
 }
 
 /* -- Public functions -- */
@@ -12233,6 +12274,339 @@ int32_t ecs_switch_next(
         sw->nodes, ecs_switch_node_t);
 
     return nodes[element].next;
+}
+
+#ifndef _MSC_VER
+#pragma GCC diagnostic ignored "-Wimplicit-fallthrough"
+#endif
+
+/*
+-------------------------------------------------------------------------------
+lookup3.c, by Bob Jenkins, May 2006, Public Domain.
+  http://burtleburtle.net/bob/c/lookup3.c
+-------------------------------------------------------------------------------
+*/
+
+#ifdef _MSC_VER
+//FIXME
+#else
+#include <sys/param.h>  /* attempt to define endianness */
+#endif
+#ifdef linux
+# include <endian.h>    /* attempt to define endianness */
+#endif
+
+/*
+ * My best guess at if you are big-endian or little-endian.  This may
+ * need adjustment.
+ */
+#if (defined(__BYTE_ORDER) && defined(__LITTLE_ENDIAN) && \
+     __BYTE_ORDER == __LITTLE_ENDIAN) || \
+    (defined(i386) || defined(__i386__) || defined(__i486__) || \
+     defined(__i586__) || defined(__i686__) || defined(vax) || defined(MIPSEL))
+# define HASH_LITTLE_ENDIAN 1
+#elif (defined(__BYTE_ORDER) && defined(__BIG_ENDIAN) && \
+       __BYTE_ORDER == __BIG_ENDIAN) || \
+      (defined(sparc) || defined(POWERPC) || defined(mc68000) || defined(sel))
+# define HASH_LITTLE_ENDIAN 0
+#else
+# define HASH_LITTLE_ENDIAN 0
+#endif
+
+#define rot(x,k) (((x)<<(k)) | ((x)>>(32-(k))))
+
+/*
+-------------------------------------------------------------------------------
+mix -- mix 3 32-bit values reversibly.
+
+This is reversible, so any information in (a,b,c) before mix() is
+still in (a,b,c) after mix().
+
+If four pairs of (a,b,c) inputs are run through mix(), or through
+mix() in reverse, there are at least 32 bits of the output that
+are sometimes the same for one pair and different for another pair.
+This was tested for:
+* pairs that differed by one bit, by two bits, in any combination
+  of top bits of (a,b,c), or in any combination of bottom bits of
+  (a,b,c).
+* "differ" is defined as +, -, ^, or ~^.  For + and -, I transformed
+  the output delta to a Gray code (a^(a>>1)) so a string of 1's (as
+  is commonly produced by subtraction) look like a single 1-bit
+  difference.
+* the base values were pseudorandom, all zero but one bit set, or 
+  all zero plus a counter that starts at zero.
+
+Some k values for my "a-=c; a^=rot(c,k); c+=b;" arrangement that
+satisfy this are
+    4  6  8 16 19  4
+    9 15  3 18 27 15
+   14  9  3  7 17  3
+Well, "9 15 3 18 27 15" didn't quite get 32 bits diffing
+for "differ" defined as + with a one-bit base and a two-bit delta.  I
+used http://burtleburtle.net/bob/hash/avalanche.html to choose 
+the operations, constants, and arrangements of the variables.
+
+This does not achieve avalanche.  There are input bits of (a,b,c)
+that fail to affect some output bits of (a,b,c), especially of a.  The
+most thoroughly mixed value is c, but it doesn't really even achieve
+avalanche in c.
+
+This allows some parallelism.  Read-after-writes are good at doubling
+the number of bits affected, so the goal of mixing pulls in the opposite
+direction as the goal of parallelism.  I did what I could.  Rotates
+seem to cost as much as shifts on every machine I could lay my hands
+on, and rotates are much kinder to the top and bottom bits, so I used
+rotates.
+-------------------------------------------------------------------------------
+*/
+#define mix(a,b,c) \
+{ \
+  a -= c;  a ^= rot(c, 4);  c += b; \
+  b -= a;  b ^= rot(a, 6);  a += c; \
+  c -= b;  c ^= rot(b, 8);  b += a; \
+  a -= c;  a ^= rot(c,16);  c += b; \
+  b -= a;  b ^= rot(a,19);  a += c; \
+  c -= b;  c ^= rot(b, 4);  b += a; \
+}
+
+/*
+-------------------------------------------------------------------------------
+final -- final mixing of 3 32-bit values (a,b,c) into c
+
+Pairs of (a,b,c) values differing in only a few bits will usually
+produce values of c that look totally different.  This was tested for
+* pairs that differed by one bit, by two bits, in any combination
+  of top bits of (a,b,c), or in any combination of bottom bits of
+  (a,b,c).
+* "differ" is defined as +, -, ^, or ~^.  For + and -, I transformed
+  the output delta to a Gray code (a^(a>>1)) so a string of 1's (as
+  is commonly produced by subtraction) look like a single 1-bit
+  difference.
+* the base values were pseudorandom, all zero but one bit set, or 
+  all zero plus a counter that starts at zero.
+
+These constants passed:
+ 14 11 25 16 4 14 24
+ 12 14 25 16 4 14 24
+and these came close:
+  4  8 15 26 3 22 24
+ 10  8 15 26 3 22 24
+ 11  8 15 26 3 22 24
+-------------------------------------------------------------------------------
+*/
+#define final(a,b,c) \
+{ \
+  c ^= b; c -= rot(b,14); \
+  a ^= c; a -= rot(c,11); \
+  b ^= a; b -= rot(a,25); \
+  c ^= b; c -= rot(b,16); \
+  a ^= c; a -= rot(c,4);  \
+  b ^= a; b -= rot(a,14); \
+  c ^= b; c -= rot(b,24); \
+}
+
+
+/*
+ * hashlittle2: return 2 32-bit hash values
+ *
+ * This is identical to hashlittle(), except it returns two 32-bit hash
+ * values instead of just one.  This is good enough for hash table
+ * lookup with 2^^64 buckets, or if you want a second hash if you're not
+ * happy with the first, or if you want a probably-unique 64-bit ID for
+ * the key.  *pc is better mixed than *pb, so use *pc first.  If you want
+ * a 64-bit value do something like "*pc + (((uint64_t)*pb)<<32)".
+ */
+static
+void hashlittle2( 
+  const void *key,       /* the key to hash */
+  size_t      length,    /* length of the key */
+  uint32_t   *pc,        /* IN: primary initval, OUT: primary hash */
+  uint32_t   *pb)        /* IN: secondary initval, OUT: secondary hash */
+{
+  uint32_t a,b,c;                                          /* internal state */
+  union { const void *ptr; size_t i; } u;     /* needed for Mac Powerbook G4 */
+
+  /* Set up the internal state */
+  a = b = c = 0xdeadbeef + ((uint32_t)length) + *pc;
+  c += *pb;
+
+  u.ptr = key;
+  if (HASH_LITTLE_ENDIAN && ((u.i & 0x3) == 0)) {
+    const uint32_t *k = (const uint32_t *)key;         /* read 32-bit chunks */
+    const uint8_t  *k8;
+    (void)k8;
+
+    /*------ all but last block: aligned reads and affect 32 bits of (a,b,c) */
+    while (length > 12)
+    {
+      a += k[0];
+      b += k[1];
+      c += k[2];
+      mix(a,b,c);
+      length -= 12;
+      k += 3;
+    }
+
+    /*----------------------------- handle the last (probably partial) block */
+    /* 
+     * "k[2]&0xffffff" actually reads beyond the end of the string, but
+     * then masks off the part it's not allowed to read.  Because the
+     * string is aligned, the masked-off tail is in the same word as the
+     * rest of the string.  Every machine with memory protection I've seen
+     * does it on word boundaries, so is OK with this.  But VALGRIND will
+     * still catch it and complain.  The masking trick does make the hash
+     * noticably faster for short strings (like English words).
+     */
+#ifndef VALGRIND
+
+    switch(length)
+    {
+    case 12: c+=k[2]; b+=k[1]; a+=k[0]; break;
+    case 11: c+=k[2]&0xffffff; b+=k[1]; a+=k[0]; break;
+    case 10: c+=k[2]&0xffff; b+=k[1]; a+=k[0]; break;
+    case 9 : c+=k[2]&0xff; b+=k[1]; a+=k[0]; break;
+    case 8 : b+=k[1]; a+=k[0]; break;
+    case 7 : b+=k[1]&0xffffff; a+=k[0]; break;
+    case 6 : b+=k[1]&0xffff; a+=k[0]; break;
+    case 5 : b+=k[1]&0xff; a+=k[0]; break;
+    case 4 : a+=k[0]; break;
+    case 3 : a+=k[0]&0xffffff; break;
+    case 2 : a+=k[0]&0xffff; break;
+    case 1 : a+=k[0]&0xff; break;
+    case 0 : *pc=c; *pb=b; return;  /* zero length strings require no mixing */
+    }
+
+#else /* make valgrind happy */
+
+    k8 = (const uint8_t *)k;
+    switch(length)
+    {
+    case 12: c+=k[2]; b+=k[1]; a+=k[0]; break;
+    case 11: c+=((uint32_t)k8[10])<<16;  /* fall through */
+    case 10: c+=((uint32_t)k8[9])<<8;    /* fall through */
+    case 9 : c+=k8[8];                   /* fall through */
+    case 8 : b+=k[1]; a+=k[0]; break;
+    case 7 : b+=((uint32_t)k8[6])<<16;   /* fall through */
+    case 6 : b+=((uint32_t)k8[5])<<8;    /* fall through */
+    case 5 : b+=k8[4];                   /* fall through */
+    case 4 : a+=k[0]; break;
+    case 3 : a+=((uint32_t)k8[2])<<16;   /* fall through */
+    case 2 : a+=((uint32_t)k8[1])<<8;    /* fall through */
+    case 1 : a+=k8[0]; break;
+    case 0 : *pc=c; *pb=b; return;  /* zero length strings require no mixing */
+    }
+
+#endif /* !valgrind */
+
+  } else if (HASH_LITTLE_ENDIAN && ((u.i & 0x1) == 0)) {
+    const uint16_t *k = (const uint16_t *)key;         /* read 16-bit chunks */
+    const uint8_t  *k8;
+
+    /*--------------- all but last block: aligned reads and different mixing */
+    while (length > 12)
+    {
+      a += k[0] + (((uint32_t)k[1])<<16);
+      b += k[2] + (((uint32_t)k[3])<<16);
+      c += k[4] + (((uint32_t)k[5])<<16);
+      mix(a,b,c);
+      length -= 12;
+      k += 6;
+    }
+
+    /*----------------------------- handle the last (probably partial) block */
+    k8 = (const uint8_t *)k;
+    switch(length)
+    {
+    case 12: c+=k[4]+(((uint32_t)k[5])<<16);
+             b+=k[2]+(((uint32_t)k[3])<<16);
+             a+=k[0]+(((uint32_t)k[1])<<16);
+             break;
+    case 11: c+=((uint32_t)k8[10])<<16;     /* fall through */
+    case 10: c+=k[4];
+             b+=k[2]+(((uint32_t)k[3])<<16);
+             a+=k[0]+(((uint32_t)k[1])<<16);
+             break;
+    case 9 : c+=k8[8];                      /* fall through */
+    case 8 : b+=k[2]+(((uint32_t)k[3])<<16);
+             a+=k[0]+(((uint32_t)k[1])<<16);
+             break;
+    case 7 : b+=((uint32_t)k8[6])<<16;      /* fall through */
+    case 6 : b+=k[2];
+             a+=k[0]+(((uint32_t)k[1])<<16);
+             break;
+    case 5 : b+=k8[4];                      /* fall through */
+    case 4 : a+=k[0]+(((uint32_t)k[1])<<16);
+             break;
+    case 3 : a+=((uint32_t)k8[2])<<16;      /* fall through */
+    case 2 : a+=k[0];
+             break;
+    case 1 : a+=k8[0];
+             break;
+    case 0 : *pc=c; *pb=b; return;  /* zero length strings require no mixing */
+    }
+
+  } else {                        /* need to read the key one byte at a time */
+    const uint8_t *k = (const uint8_t *)key;
+
+    /*--------------- all but the last block: affect some 32 bits of (a,b,c) */
+    while (length > 12)
+    {
+      a += k[0];
+      a += ((uint32_t)k[1])<<8;
+      a += ((uint32_t)k[2])<<16;
+      a += ((uint32_t)k[3])<<24;
+      b += k[4];
+      b += ((uint32_t)k[5])<<8;
+      b += ((uint32_t)k[6])<<16;
+      b += ((uint32_t)k[7])<<24;
+      c += k[8];
+      c += ((uint32_t)k[9])<<8;
+      c += ((uint32_t)k[10])<<16;
+      c += ((uint32_t)k[11])<<24;
+      mix(a,b,c);
+      length -= 12;
+      k += 12;
+    }
+
+    /*-------------------------------- last block: affect all 32 bits of (c) */
+    switch(length)                   /* all the case statements fall through */
+    {
+    case 12: c+=((uint32_t)k[11])<<24;
+    case 11: c+=((uint32_t)k[10])<<16;
+    case 10: c+=((uint32_t)k[9])<<8;
+    case 9 : c+=k[8];
+    case 8 : b+=((uint32_t)k[7])<<24;
+    case 7 : b+=((uint32_t)k[6])<<16;
+    case 6 : b+=((uint32_t)k[5])<<8;
+    case 5 : b+=k[4];
+    case 4 : a+=((uint32_t)k[3])<<24;
+    case 3 : a+=((uint32_t)k[2])<<16;
+    case 2 : a+=((uint32_t)k[1])<<8;
+    case 1 : a+=k[0];
+             break;
+    case 0 : *pc=c; *pb=b; return;  /* zero length strings require no mixing */
+    }
+  }
+
+  final(a,b,c);
+  *pc=c; *pb=b;
+}
+
+void ecs_hash(
+    const void *data,
+    ecs_size_t length,
+    uint64_t *result)
+{
+    uint32_t h_1 = 0;
+    uint32_t h_2 = 0;
+
+    hashlittle2(
+        data,
+        ecs_to_size_t(length),
+        &h_1,
+        &h_2);
+
+    *result = h_1 | ((uint64_t)h_2 << 32);
 }
 
 
@@ -14533,28 +14907,68 @@ int table_compare(
 }
 
 static
+bool has_auto_activation(
+    ecs_query_t *q)
+{
+    /* Only a basic query with no additional features does table activation */
+    return !(q->flags & EcsQueryNoActivation);
+}
+
+static
 void order_ranked_tables(
     ecs_world_t *world,
     ecs_query_t *query)
 {
     if (query->group_table) {
         ecs_vector_sort(query->tables, ecs_matched_table_t, table_compare);       
-    }
 
-    /* Re-register monitors after tables have been reordered. This will update
-     * the table administration with the new matched_table ids, so that when a
-     * monitor is executed we can quickly find the right matched_table. */
-    if (query->flags & EcsQueryMonitor) {
-        ecs_vector_each(query->tables, ecs_matched_table_t, table, {
-            ecs_table_notify(world, table->iter_data.table, &(ecs_table_event_t){
-                .kind = EcsTableQueryMatch,
-                .query = query,
-                .matched_table_index = table_i
+        /* Recompute the table indices by first resetting all indices, and then
+         * re-adding them one by one. */
+        if (has_auto_activation(query)) { 
+            ecs_map_iter_t it = ecs_map_iter(query->table_indices);
+            ecs_table_indices_t *ti;
+            while ((ti = ecs_map_next(&it, ecs_table_indices_t, NULL))) {
+                /* If table is registered, it must have at least one index */
+                int32_t count = ti->count;
+                ecs_assert(count > 0, ECS_INTERNAL_ERROR, NULL);
+                (void)count;
+
+                /* Only active tables are reordered, so don't reset inactive 
+                 * tables */
+                if (ti->indices[0] >= 0) {
+                    ti->count = 0;
+                }
+            }
+        }
+
+        /* Re-register monitors after tables have been reordered. This will update
+         * the table administration with the new matched_table ids, so that when a
+         * monitor is executed we can quickly find the right matched_table. */
+        if (query->flags & EcsQueryMonitor) { 
+            ecs_vector_each(query->tables, ecs_matched_table_t, table, {        
+                ecs_table_notify(world, table->iter_data.table, &(ecs_table_event_t){
+                    .kind = EcsTableQueryMatch,
+                    .query = query,
+                    .matched_table_index = table_i
+                });
             });
-        });
-    }
+        }
 
-    query->match_count ++; 
+        /* Update table index */
+        if (has_auto_activation(query)) {
+            ecs_vector_each(query->tables, ecs_matched_table_t, table, {  
+                ecs_table_indices_t *ti = ecs_map_get(query->table_indices, 
+                    ecs_table_indices_t, table->iter_data.table->id);
+
+                ecs_assert(ti != NULL, ECS_INTERNAL_ERROR, NULL);
+                ti->indices[ti->count] = table_i;
+                ti->count ++;
+            });
+        }
+    }
+    
+    query->match_count ++;
+    query->needs_reorder = false;
 }
 
 static
@@ -14590,14 +15004,6 @@ void group_tables(
             group_table(world, query, table);
         });              
     }
-}
-
-static
-bool has_auto_activation(
-    ecs_query_t *q)
-{
-    /* Only a basic query with no additional features does table activation */
-    return !(q->flags & EcsQueryNoActivation);
 }
 
 #ifndef NDEBUG
@@ -15037,6 +15443,8 @@ void add_table(
     }
 
     /* From here we recurse */
+    int32_t *table_indices = NULL;
+    int32_t table_indices_count = 0;
     int32_t matched_table_index = 0;
     ecs_matched_table_t table_data;
     ecs_vector_t *references = NULL;
@@ -15165,6 +15573,13 @@ add_trait:
         table_elem = ecs_vector_add(&query->empty_tables, 
             ecs_matched_table_t);
 
+        /* Store table index */
+        matched_table_index = ecs_vector_count(query->empty_tables);
+        table_indices_count ++;
+        table_indices = ecs_os_realloc(
+            table_indices, table_indices_count * ECS_SIZEOF(int32_t));
+        table_indices[table_indices_count - 1] = -matched_table_index;
+
         #ifndef NDEBUG
         char *type_expr = ecs_type_str(world, table->type);
         ecs_trace_2("query #[green]%s#[reset] matched with table #[green][%s]",
@@ -15200,6 +15615,18 @@ add_trait:
     trait_cur ++;
     if (trait_cur < trait_count) {
         goto add_trait;
+    }
+
+    /* Register table indices before sending out the match signal. This signal
+     * can cause table activation, and table indices are needed for that. */
+    if (table_indices) {
+        ecs_table_indices_t *ti = ecs_map_ensure(
+            query->table_indices, ecs_table_indices_t, table->id);
+        if (ti->indices) {
+            ecs_os_free(ti->indices);
+        }
+        ti->indices = table_indices;
+        ti->count = table_indices_count;
     }
 
     if (table && !(query->flags & EcsQueryIsSubquery)) {
@@ -15393,83 +15820,6 @@ void match_tables(
     order_ranked_tables(world, query);
 }
 
-/** Get index of table in system's matched tables */
-static
-int32_t get_table_param_index(
-    ecs_table_t *table,
-    ecs_vector_t *tables,
-    int32_t start_index)
-{
-    int32_t i, count = ecs_vector_count(tables);
-    ecs_matched_table_t *table_data = ecs_vector_first(
-        tables, ecs_matched_table_t);
-
-    for (i = start_index; i < count; i ++) {
-        if (table_data[i].iter_data.table == table) {
-            break;
-        }
-    }
-
-    return i == count ? -1 : i;
-}
-
-/** Check if a table was matched with the system */
-static
-int32_t table_matched(
-    ecs_vector_t *tables,
-    ecs_table_t *table)
-{
-    int32_t i, count = ecs_vector_count(tables);
-    ecs_matched_table_t *table_data = ecs_vector_first(
-        tables, ecs_matched_table_t);
-
-    for (i = 0; i < count; i ++) {
-        if (table_data[i].iter_data.table == table) {
-            return i;
-        }
-    }
-
-    return -1;
-}
-
-static
-void resolve_cascade_container(
-    ecs_world_t *world,
-    ecs_query_t *query,
-    int32_t table_data_index,
-    ecs_type_t table_type)
-{
-    ecs_matched_table_t *table_data = ecs_vector_get(
-        query->tables, ecs_matched_table_t, table_data_index);
-    
-    ecs_assert(table_data->iter_data.references != 0, ECS_INTERNAL_ERROR, NULL);
-
-    /* Obtain reference index */
-    int32_t *column_indices = table_data->iter_data.columns;
-    int32_t column = query->cascade_by - 1;
-    int32_t ref_index = -column_indices[column] - 1;
-
-    /* Obtain pointer to the reference data */
-    ecs_ref_t *references = table_data->iter_data.references;
-    ecs_ref_t *ref = &references[ref_index];
-    ecs_assert(ref->component == get_cascade_component(query), 
-        ECS_INTERNAL_ERROR, NULL);
-
-    /* Resolve container entity */
-    ecs_entity_t container = ecs_find_in_type(
-        world, table_type, ref->component, ECS_CHILDOF);    
-
-    /* If container was found, update the reference */
-    if (container) {
-        references[ref_index].entity = container;
-        ecs_get_ref_w_entity(
-            world, &references[ref_index], container, 
-            ref->component);
-    } else {
-        references[ref_index].entity = 0;
-    }
-}
-
 #define ELEM(ptr, size, index) ECS_OFFSET(ptr, size * index)
 
 static
@@ -15534,7 +15884,7 @@ void qsort_array(
 {   
     if ((hi - lo) < 1)  {
         return;
-    }   
+    }
 
     int32_t p = qsort_partition(
         world, table, data, entities, ptr, size, lo, hi, compare);
@@ -15579,20 +15929,25 @@ void sort_table(
 typedef struct sort_helper_t {
     ecs_matched_table_t *table;
     ecs_entity_t *entities;
-    void *ptr;
+    const void *ptr;
     int32_t row;
     int32_t elem_size;
     int32_t count;
+    bool shared;
 } sort_helper_t;
 
 static
-void* ptr_from_helper(
+const void* ptr_from_helper(
     sort_helper_t *helper)
 {
     ecs_assert(helper->row < helper->count, ECS_INTERNAL_ERROR, NULL);
     ecs_assert(helper->elem_size >= 0, ECS_INTERNAL_ERROR, NULL);
     ecs_assert(helper->row >= 0, ECS_INTERNAL_ERROR, NULL);
-    return ELEM(helper->ptr, helper->elem_size, helper->row);
+    if (helper->shared) {
+        return helper->ptr;
+    } else {
+        return ELEM(helper->ptr, helper->elem_size, helper->row);
+    }
 }
 
 static
@@ -15612,6 +15967,7 @@ void build_sorted_table_range(
     int32_t start,
     int32_t end)
 {
+    ecs_world_t *world = query->world;
     ecs_entity_t component = query->sort_on_component;
     ecs_compare_action_t compare = query->compare;
 
@@ -15636,9 +15992,26 @@ void build_sorted_table_range(
             int16_t align = column->alignment;
             helper[to_sort].ptr = ecs_vector_first_t(column->data, size, align);
             helper[to_sort].elem_size = size;
+            helper[to_sort].shared = false;
+        } else if (component) {
+            /* Find component in prefab */
+            ecs_entity_t base = ecs_find_entity_in_prefabs(
+                world, 0, table->type, component, 0);
+            
+            /* If a base was not found, the query should not have allowed using
+             * the component for sorting */
+            ecs_assert(base != 0, ECS_INTERNAL_ERROR, NULL);
+
+            const EcsComponent *cptr = ecs_get(world, component, EcsComponent);
+            ecs_assert(cptr != NULL, ECS_INTERNAL_ERROR, NULL);
+
+            helper[to_sort].ptr = ecs_get_w_entity(world, base, component);
+            helper[to_sort].elem_size = cptr->size;
+            helper[to_sort].shared = true;
         } else {
             helper[to_sort].ptr = NULL;
             helper[to_sort].elem_size = 0;
+            helper[to_sort].shared = false;
         }
 
         helper[to_sort].table = table_data;
@@ -15674,8 +16047,8 @@ void build_sorted_table_range(
                 continue;
             }
 
-            void *ptr1 = ptr_from_helper(&helper[min]);
-            void *ptr2 = ptr_from_helper(&helper[j]);
+            const void *ptr1 = ptr_from_helper(&helper[min]);
+            const void *ptr2 = ptr_from_helper(&helper[j]);
 
             if (compare(e1, ptr1, e2, ptr2) > 0) {
                 min = j;
@@ -15733,6 +16106,10 @@ static
 bool tables_dirty(
     ecs_query_t *query)
 {
+    if (query->needs_reorder) {
+        order_ranked_tables(query->world, query);
+    }
+
     int32_t i, count = ecs_vector_count(query->tables);
     ecs_matched_table_t *tables = ecs_vector_first(query->tables, 
         ecs_matched_table_t);
@@ -15828,9 +16205,14 @@ void sort_tables(
             /* Get index of sorted component. We only care if the component we're
             * sorting on has changed or if entities have been added / re(moved) */
             index = ecs_type_index_of(table->type, sort_on_component);
-            ecs_assert(index != -1, ECS_INVALID_PARAMETER, NULL);
-            ecs_assert(index < ecs_vector_count(table->type), ECS_INTERNAL_ERROR, NULL); 
-            is_dirty = is_dirty || (dirty_state[index + 1] != table_data->monitor[index + 1]);
+            if (index != -1) {
+                ecs_assert(index < ecs_vector_count(table->type), ECS_INTERNAL_ERROR, NULL); 
+                is_dirty = is_dirty || (dirty_state[index + 1] != table_data->monitor[index + 1]);
+            } else {
+                /* Table does not contain component which means the sorted
+                 * component is shared. Table does not need to be sorted */
+                continue;
+            }
         }      
         
         /* Check both if entities have moved (element 0) or if the component
@@ -16037,6 +16419,96 @@ bool match_table(
     return false;
 }
 
+/* Move table from empty to non-empty list, or vice versa */
+static
+int32_t move_table(
+    ecs_query_t *query,
+    ecs_table_t *table,
+    int32_t index,
+    ecs_vector_t **dst_array,
+    ecs_vector_t *src_array,
+    bool activate)
+{
+    (void)table;
+
+    int32_t new_index = 0;
+    int32_t last_src_index = ecs_vector_count(src_array) - 1;
+    ecs_assert(last_src_index >= 0, ECS_INTERNAL_ERROR, NULL);
+
+    ecs_matched_table_t *mt = ecs_vector_last(src_array, ecs_matched_table_t);
+    
+    /* The last table of the source array will be moved to the location of the
+     * table to move, do some bookkeeping to keep things consistent. */
+    if (last_src_index) {
+        ecs_table_indices_t *ti = ecs_map_get(query->table_indices, 
+            ecs_table_indices_t, mt->iter_data.table->id);
+
+        int i, count = ti->count;
+        for (i = 0; i < count; i ++) {
+            int32_t old_index = ti->indices[i];
+            if (activate) {
+                if (old_index >= 0) {
+                    /* old_index should be negative if activate is true, since
+                     * we're moving from the empty list to the non-empty list. 
+                     * However, if the last table in the source array is also
+                     * the table being moved, this can happen. */
+                    ecs_assert(table == mt->iter_data.table, 
+                        ECS_INTERNAL_ERROR, NULL);
+                    continue;
+                }
+                /* If activate is true, src = the empty list, and index should
+                 * be negative. */
+                old_index = old_index * -1 - 1; /* Normalize */
+            }
+
+            /* Ensure to update correct index, as there can be more than one */
+            if (old_index == last_src_index) {
+                if (activate) {
+                    ti->indices[i] = index * -1 - 1;
+                } else {
+                    ti->indices[i] = index;
+                }
+                break;
+            }
+        }
+
+        /* If the src array contains tables, there must be a table that will get
+         * moved. */
+        ecs_assert(i != count, ECS_INTERNAL_ERROR, NULL);
+    } else {
+        /* If last_src_index is 0, the table to move was the only table in the
+         * src array, so no other administration needs to be updated. */
+    }
+
+    /* Actually move the table. Only move from src to dst if we have a
+     * dst_array, otherwise just remove it from src. */
+    if (dst_array) {
+        new_index = ecs_vector_count(*dst_array);
+        ecs_vector_move_index(dst_array, src_array, ecs_matched_table_t, index);
+
+        /* Make sure table is where we expect it */
+        mt = ecs_vector_last(*dst_array, ecs_matched_table_t);
+        ecs_assert(mt->iter_data.table == table, ECS_INTERNAL_ERROR, NULL);
+        ecs_assert(ecs_vector_count(*dst_array) == (new_index + 1), 
+            ECS_INTERNAL_ERROR, NULL);  
+    } else {
+        ecs_vector_remove_index(src_array, ecs_matched_table_t, index);
+    }
+
+    /* Ensure that src array has now one element less */
+    ecs_assert(ecs_vector_count(src_array) == last_src_index, 
+        ECS_INTERNAL_ERROR, NULL);
+
+    /* Return new index for table */
+    if (activate) {
+        /* Table is now active, index is positive */
+        return new_index;
+    } else {
+        /* Table is now inactive, index is negative */
+        return new_index * -1 - 1;
+    }
+}
+
 /** Table activation happens when a table was or becomes empty. Deactivated
  * tables are not considered by the system in the main loop. */
 static
@@ -16047,6 +16519,7 @@ void activate_table(
     bool active)
 {
     ecs_vector_t *src_array, *dst_array;
+    int32_t activated = 0;
 
     if (active) {
         src_array = query->empty_tables;
@@ -16056,45 +16529,77 @@ void activate_table(
         dst_array = query->empty_tables;
     }
 
-    int32_t i = 0, activated = 0;
-    while ((i = get_table_param_index(table, src_array, i)) != -1) {
-        activated ++;
+    ecs_table_indices_t *ti = ecs_map_get(
+        query->table_indices, ecs_table_indices_t, table->id);
 
-        int32_t src_count = ecs_vector_move_index(
-            &dst_array, src_array, ecs_matched_table_t, i);
+    if (ti) {
+        int32_t i, count = ti->count;
+        for (i = 0; i < count; i ++) {
+            int32_t index = ti->indices[i];
 
-        if (active) {
+            if (index < 0) {
+                if (!active) {
+                    /* If table is already inactive, no need to move */
+                    continue;
+                }
+                index = index * -1 - 1;
+            } else {
+                if (active) {
+                    /* If table is already active, no need to move */
+                    continue;
+                }
+            }
+
+            ecs_matched_table_t *mt = ecs_vector_get(
+                src_array, ecs_matched_table_t, index);
+            ecs_assert(mt->iter_data.table == table, ECS_INTERNAL_ERROR, NULL);
+            (void)mt;
+            
+            activated ++;
+
+            ti->indices[i] = move_table(
+                query, table, index, &dst_array, src_array, active);
+        }
+
+        if (activated) {
+            /* Activate system if registered with query */
+#ifdef FLECS_SYSTEMS_H
+            if (query->system) {
+                int32_t dst_count = ecs_vector_count(dst_array);
+                if (active) {
+                    if (dst_count == 1) {
+                        ecs_system_activate(world, query->system, true, NULL);
+                    }
+                } else if (ecs_vector_count(src_array) == 0) {
+                    ecs_system_activate(world, query->system, false, NULL);
+                }
+            }
+#else
+            (void)src_count;
+#endif
+        }
+
+        if (active)  {
             query->tables = dst_array;
         } else {
             query->empty_tables = dst_array;
         }
-
-        /* Activate system if registered with query */
-#ifdef FLECS_SYSTEMS_H
-        if (query->system) {
-            int32_t dst_count = ecs_vector_count(dst_array);
-            if (active) {
-                if (dst_count == 1) {
-                    ecs_system_activate(world, query->system, true, NULL);
-                }
-            } else if (src_count == 0) {
-                ecs_system_activate(world, query->system, false, NULL);
-            }
-        }
-#else
-        (void)src_count;
-#endif        
     }
-
+    
     if (!activated) {
         /* Received an activate event for a table we're not matched with. This
-        * can only happen if this is a subquery */
+         * can only happen if this is a subquery */
         ecs_assert((query->flags & EcsQueryIsSubquery) != 0, 
             ECS_INTERNAL_ERROR, NULL);
         return;
     }
 
-    order_ranked_tables(world, query);
+    /* Signal query it needs to reorder tables. Doing this in place could slow
+     * down scenario's where a large number of tables is matched with an ordered
+     * query. Since each table would trigger the activate signal, there would be
+     * as many sorts as added tables, vs. only one when ordering happens when an
+     * iterator is obtained. */
+    query->needs_reorder = true;
 }
 
 static
@@ -16159,44 +16664,117 @@ void free_matched_table(
     ecs_os_free(table->monitor);
 }
 
-/* Remove table */
+/** Check if a table was matched with the system */
 static
-void remove_table(
-    ecs_vector_t *tables,
-    int32_t index)
+ecs_table_indices_t* get_table_indices(
+    ecs_query_t *query,
+    ecs_table_t *table)
 {
-    ecs_matched_table_t *table = ecs_vector_get(
-        tables, ecs_matched_table_t, index);
-    free_matched_table(table);
-    ecs_vector_remove_index(tables, ecs_matched_table_t, index);
+    return ecs_map_get(query->table_indices, ecs_table_indices_t, table->id);
 }
 
 static
-void unmatch_table_w_index(
+void resolve_cascade_container(
+    ecs_world_t *world,
+    ecs_query_t *query,
+    ecs_table_indices_t *ti,
+    ecs_type_t table_type)
+{
+    int32_t i, count = ti->count;
+    for (i = 0; i < count; i ++) {
+        int32_t table_data_index = ti->indices[i];
+        ecs_matched_table_t *table_data;
+
+        if (table_data_index >= 0) {
+            table_data = ecs_vector_get(
+                query->tables, ecs_matched_table_t, table_data_index);            
+        } else {
+            table_data = ecs_vector_get(
+                query->empty_tables, ecs_matched_table_t, table_data_index);
+        }
+        
+        ecs_assert(table_data->iter_data.references != 0, ECS_INTERNAL_ERROR, NULL);
+
+        /* Obtain reference index */
+        int32_t *column_indices = table_data->iter_data.columns;
+        int32_t column = query->cascade_by - 1;
+        int32_t ref_index = -column_indices[column] - 1;
+
+        /* Obtain pointer to the reference data */
+        ecs_ref_t *references = table_data->iter_data.references;
+        ecs_ref_t *ref = &references[ref_index];
+        ecs_assert(ref->component == get_cascade_component(query), 
+            ECS_INTERNAL_ERROR, NULL);
+
+        /* Resolve container entity */
+        ecs_entity_t container = ecs_find_in_type(
+            world, table_type, ref->component, ECS_CHILDOF);    
+
+        /* If container was found, update the reference */
+        if (container) {
+            references[ref_index].entity = container;
+            ecs_get_ref_w_entity(
+                world, &references[ref_index], container, 
+                ref->component);
+        } else {
+            references[ref_index].entity = 0;
+        }
+    }
+}
+
+/* Remove table */
+static
+void remove_table(
     ecs_query_t *query,
     ecs_table_t *table,
-    int32_t match)
+    ecs_vector_t *tables,
+    int32_t index,
+    bool empty)
 {
-    /* If table no longer matches, remove it */
-    if (match != -1) {
-        remove_table(query->tables, match);
-    } else {
-        /* Make sure the table is removed if it was inactive */
-        match = table_matched(
-            query->empty_tables, table);
-        if (match != -1) {
-            remove_table(query->empty_tables, match);
-        }
-    }  
+    ecs_matched_table_t *mt = ecs_vector_get(
+        tables, ecs_matched_table_t, index);
+    if (!mt) {
+        /* Query was notified of a table it doesn't match with, this can only
+         * happen if query is a subquery. */
+        ecs_assert(query->flags & EcsQueryIsSubquery, ECS_INTERNAL_ERROR, NULL);
+        return;
+    }
+    
+    ecs_assert(mt->iter_data.table == table, ECS_INTERNAL_ERROR, NULL);
+    (void)table;
+
+    /* Free table before moving, as the move will cause another table to occupy
+     * the memory of mt */
+    free_matched_table(mt);  
+    move_table(query, mt->iter_data.table, index, NULL, tables, empty);
 }
 
 static
 void unmatch_table(
     ecs_query_t *query,
-    ecs_table_t *table)
+    ecs_table_t *table,
+    ecs_table_indices_t *ti)
 {
-    unmatch_table_w_index(
-        query, table, table_matched(query->tables, table));       
+    if (!ti) {
+        ti = get_table_indices(query, table);
+        if (!ti) {
+            return;
+        }
+    }
+
+    int32_t i, count = ti->count;
+    for (i = 0; i < count; i ++) {
+        int32_t index = ti->indices[i];
+        if (index < 0) {
+            index = index * -1 - 1;
+            remove_table(query, table, query->empty_tables, index, true);
+        } else {
+            remove_table(query, table, query->tables, index, false);
+        }
+    }
+
+    ecs_os_free(ti->indices);
+    ecs_map_remove(query->table_indices, table->id);
 }
 
 static
@@ -16205,14 +16783,12 @@ void rematch_table(
     ecs_query_t *query,
     ecs_table_t *table)
 {
-    int32_t match = table_matched(query->tables, table);
+    ecs_table_indices_t *match = get_table_indices(query, table);
 
     if (ecs_query_match(world, table, query, NULL)) {
         /* If the table matches, and it is not currently matched, add */
-        if (match == -1) {
-            if (table_matched(query->empty_tables, table) == -1) {
-                add_table(world, query, table);
-            }
+        if (match == NULL) {
+            add_table(world, query, table);
 
         /* If table still matches and has cascade column, reevaluate the
          * sources of references. This may have changed in case 
@@ -16225,7 +16801,7 @@ void rematch_table(
          * previously had data no longer has data, or vice versa. Do a full
          * rematch to make sure data is consistent. */
         } else if (query->flags & EcsQueryHasOptional) {
-            unmatch_table(query, table);
+            unmatch_table(query, table, match);
             if (!(query->flags & EcsQueryIsSubquery)) {
                 ecs_table_notify(world, table, &(ecs_table_event_t){
                     .kind = EcsTableQueryUnmatch,
@@ -16236,8 +16812,8 @@ void rematch_table(
         }
     } else {
         /* Table no longer matches, remove */
-        if (match != -1) {
-            unmatch_table(query, table);
+        if (match != NULL) {
+            unmatch_table(query, table, match);
             if (!(query->flags & EcsQueryIsSubquery)) {
                 ecs_table_notify(world, table, &(ecs_table_event_t){
                     .kind = EcsTableQueryUnmatch,
@@ -16340,7 +16916,7 @@ void ecs_query_notify(
         break;
     case EcsQueryTableUnmatch:
         /* Deletion of table */
-        unmatch_table(query, event->table);
+        unmatch_table(query, event->table, NULL);
         break;
     case EcsQueryTableRematch:
         /* Rematch tables of query */
@@ -16378,6 +16954,7 @@ ecs_query_t* ecs_query_new_w_sig_intern(
     ecs_query_t *result = ecs_os_calloc(sizeof(ecs_query_t));
     result->world = world;
     result->sig = *sig;
+    result->table_indices = ecs_map_new(ecs_table_indices_t, 0);
     result->tables = ecs_vector_new(ecs_matched_table_t, 0);
     result->empty_tables = ecs_vector_new(ecs_matched_table_t, 0);
     result->system = system;
@@ -16491,6 +17068,13 @@ void ecs_query_free(
         free_matched_table(table);
     });
 
+    ecs_map_iter_t it = ecs_map_iter(query->table_indices);
+    ecs_table_indices_t *ti;
+    while ((ti = ecs_map_next(&it, ecs_table_indices_t, NULL))) {
+        ecs_os_free(ti->indices);
+    }
+    ecs_map_free(query->table_indices);
+
     ecs_vector_free(query->subqueries);
     ecs_vector_free(query->tables);
     ecs_vector_free(query->empty_tables);
@@ -16523,6 +17107,10 @@ ecs_iter_t ecs_query_iter_page(
     ecs_assert(!(query->flags & EcsQueryIsOrphaned), ECS_INVALID_PARAMETER, NULL);
 
     ecs_world_t *world = query->world;
+
+    if (query->needs_reorder) {
+        order_ranked_tables(world, query);
+    }
     
     sort_tables(world, query);
 
@@ -17316,6 +17904,24 @@ void register_child_table(
 }
 
 static
+ecs_edge_t* get_edge(
+    ecs_table_t *node,
+    ecs_entity_t e)
+{
+    if (e < ECS_HI_COMPONENT_ID) {
+        if (!node->lo_edges) {
+            node->lo_edges = ecs_os_calloc(sizeof(ecs_edge_t) * ECS_HI_COMPONENT_ID);
+        }
+        return &node->lo_edges[e];
+    } else {
+        if (!node->hi_edges) {
+            node->hi_edges = ecs_map_new(ecs_edge_t, 1);
+        }
+        return ecs_map_ensure(node->hi_edges, ecs_edge_t, e);
+    }
+}
+
+static
 void init_edges(
     ecs_world_t * world,
     ecs_table_t * table)
@@ -17323,32 +17929,20 @@ void init_edges(
     ecs_entity_t *entities = ecs_vector_first(table->type, ecs_entity_t);
     int32_t count = ecs_vector_count(table->type);
 
-    table->lo_edges = ecs_os_calloc(sizeof(ecs_edge_t) * ECS_HI_COMPONENT_ID);
-    table->hi_edges = ecs_map_new(ecs_edge_t, 0);
-
-    table->lo_edges[0].add = table;
+    table->lo_edges = NULL;
+    table->hi_edges = NULL;
     
     /* Make add edges to own components point to self */
     int32_t i;
     for (i = 0; i < count; i ++) {
         ecs_entity_t e = entities[i];
 
-        if (e >= ECS_HI_COMPONENT_ID) {
-            ecs_edge_t edge = { .add = table };
+        ecs_edge_t *edge = get_edge(table, e);
+        ecs_assert(edge != NULL, ECS_INTERNAL_ERROR, NULL);
+        edge->add = table;
 
-            if (count == 1) {
-                edge.remove = &world->store.root;
-            }
-
-            ecs_map_set(table->hi_edges, e, &edge);
-        } else {
-            table->lo_edges[e].add = table;
-
-            if (count == 1) {
-                table->lo_edges[e].remove = &world->store.root;
-            } else {
-                table->lo_edges[e].remove = NULL;
-            }
+        if (count == 1) {
+            edge->remove = &world->store.root;
         }
 
         /* As we're iterating over the table components, also set the table
@@ -17440,7 +18034,8 @@ void init_table(
 static
 ecs_table_t *create_table(
     ecs_world_t * world,
-    ecs_entities_t * entities)
+    ecs_entities_t * entities,
+    uint64_t hash)
 {
     ecs_table_t *result = ecs_sparse_add(world->store.tables, ecs_table_t);
     result->id = ecs_to_u32(ecs_sparse_last_id(world->store.tables));
@@ -17454,6 +18049,12 @@ ecs_table_t *create_table(
     ecs_os_free(expr);
 #endif
     ecs_log_push();
+
+    /* Store table in lookup map */
+    ecs_vector_t *tables = ecs_map_get_ptr(world->store.table_map, ecs_vector_t*, hash);
+    ecs_table_t **elem = ecs_vector_add(&tables, ecs_table_t*);
+    *elem = result;
+    ecs_map_set(world->store.table_map, hash, &tables);
 
     ecs_notify_queries(world, &(ecs_query_event_t) {
         .kind = EcsQueryTableMatch,
@@ -17521,28 +18122,6 @@ void remove_entity_from_type(
     }
 
     out->count = el;
-}
-
-static
-ecs_edge_t* get_edge(
-    ecs_table_t *node,
-    ecs_entity_t e)
-{
-    ecs_edge_t *edge;
-
-    if (e < ECS_HI_COMPONENT_ID) {
-        edge = &node->lo_edges[e];
-    } else {
-        edge = ecs_map_get(node->hi_edges, ecs_edge_t, e);        
-        if (!edge) {
-            ecs_edge_t new_edge = {0};
-            ecs_map_set(node->hi_edges, e, &new_edge);
-            edge = ecs_map_get(node->hi_edges, ecs_edge_t, e);    
-            ecs_assert(edge != NULL, ECS_INTERNAL_ERROR, NULL);
-        }
-    }
-
-    return edge;
 }
 
 static
@@ -17720,55 +18299,6 @@ ecs_table_t *find_or_create_table_exclude(
     return result;    
 }
 
-static
-ecs_table_t* traverse_remove_hi_edges(
-    ecs_world_t * world,
-    ecs_table_t * node,
-    int32_t i,
-    ecs_entities_t * to_remove,
-    ecs_entities_t * removed)
-{
-    int32_t count = to_remove->count;
-    ecs_entity_t *entities = to_remove->array;
-
-    for (; i < count; i ++) {
-        ecs_entity_t e = entities[i];
-        ecs_entity_t next_e = e;
-        ecs_table_t *next;
-        ecs_edge_t *edge;
-
-        edge = get_edge(node, e);
-
-        next = edge->remove;
-
-        if (!next) {
-            next = find_or_create_table_exclude(world, node, next_e);
-            if (!next) {
-                return NULL;
-            }
-
-            edge->remove = next;
-        }
-
-        bool has_case = ECS_HAS_ROLE(e, CASE);
-        if (removed && (node != next || has_case)) {
-            /* If this is a case, find switch and encode it in added id */
-            if (has_case) {
-                int32_t s_case = ecs_table_switch_from_case(world, node, e);
-                ecs_assert(s_case != -1, ECS_INTERNAL_ERROR, NULL);
-                e = ECS_CASE | ecs_entity_t_comb(e, s_case);
-            }
-            removed->array[removed->count ++] = e; 
-        }        
-
-        // if (removed && node != next) removed->array[removed->count ++] = e;
-
-        node = next;        
-    }
-
-    return node;
-}
-
 ecs_table_t* ecs_table_traverse_remove(
     ecs_world_t * world,
     ecs_table_t * node,
@@ -17782,14 +18312,10 @@ ecs_table_t* ecs_table_traverse_remove(
     for (i = 0; i < count; i ++) {
         ecs_entity_t e = entities[i];
 
-        /* If the array is not a simple component array, use a function that
-         * handles all cases, but is slower */
-        if (e >= ECS_HI_COMPONENT_ID) {
-            return traverse_remove_hi_edges(world, node, i, to_remove, 
-                removed);
-        }
+        /* Removing 0 from an entity is not valid */
+        ecs_assert(e != 0, ECS_INVALID_PARAMETER, NULL);
 
-        ecs_edge_t *edge = &node->lo_edges[e];
+        ecs_edge_t *edge = get_edge(node, e);
         ecs_table_t *next = edge->remove;
 
         if (!next) {
@@ -17808,7 +18334,16 @@ ecs_table_t* ecs_table_traverse_remove(
             }
         }
 
-        if (removed) removed->array[removed->count ++] = e;
+        bool has_case = ECS_HAS_ROLE(e, CASE);
+        if (removed && (node != next || has_case)) {
+            /* If this is a case, find switch and encode it in added id */
+            if (has_case) {
+                int32_t s_case = ecs_table_switch_from_case(world, node, e);
+                ecs_assert(s_case != -1, ECS_INTERNAL_ERROR, NULL);
+                e = ECS_CASE | ecs_entity_t_comb(e, s_case);
+            }
+            removed->array[removed->count ++] = e; 
+        }
 
         node = next;
     }    
@@ -17853,34 +18388,33 @@ void find_owned_components(
     }
 }
 
-static
-ecs_table_t* traverse_add_hi_edges(
+ecs_table_t* ecs_table_traverse_add(
     ecs_world_t * world,
     ecs_table_t * node,
-    int32_t i,
     ecs_entities_t * to_add,
-    ecs_entities_t * added)
+    ecs_entities_t * added)    
 {
-    int32_t count = to_add->count;
+    int32_t i, count = to_add->count;
     ecs_entity_t *entities = to_add->array;
+    node = node ? node : &world->store.root;
 
     ecs_entity_t owned_array[ECS_MAX_ADD_REMOVE];
     ecs_entities_t owned = {
         .array = owned_array,
         .count = 0
-    };
+    };    
 
-    for (; i < count; i ++) {
+    for (i = 0; i < count; i ++) {
         ecs_entity_t e = entities[i];
-        ecs_entity_t next_e = e;
-        ecs_table_t *next;
-        ecs_edge_t *edge;
 
-        edge = get_edge(node, e);
-        next = edge->add;
+        /* Adding 0 to an entity is not valid */
+        ecs_assert(e != 0, ECS_INVALID_PARAMETER, NULL);
+
+        ecs_edge_t *edge = get_edge(node, e);
+        ecs_table_t *next = edge->add;
 
         if (!next) {
-            next = find_or_create_table_include(world, node, next_e);
+            next = find_or_create_table_include(world, node, e);
             ecs_assert(next != NULL, ECS_INTERNAL_ERROR, NULL);
             edge->add = next;
         }
@@ -17898,7 +18432,7 @@ ecs_table_t* traverse_add_hi_edges(
 
         if ((node != next) && ECS_HAS_ROLE(e, INSTANCEOF)) {
             find_owned_components(world, next, ECS_COMPONENT_MASK & e, &owned);
-        } 
+        }        
 
         node = next;
     }
@@ -17906,46 +18440,6 @@ ecs_table_t* traverse_add_hi_edges(
     /* In case OWNED components were found, add them as well */
     if (owned.count) {
         node = ecs_table_traverse_add(world, node, &owned, added);
-    }
-
-    return node;
-}
-
-ecs_table_t* ecs_table_traverse_add(
-    ecs_world_t * world,
-    ecs_table_t * node,
-    ecs_entities_t * to_add,
-    ecs_entities_t * added)    
-{
-    int32_t i, count = to_add->count;
-    ecs_entity_t *entities = to_add->array;
-    node = node ? node : &world->store.root;
-
-    for (i = 0; i < count; i ++) {
-        ecs_entity_t e = entities[i];
-        ecs_table_t *next;
-
-        /* If the array is not a simple component array, use a function that
-         * handles all cases, but is slower */
-        if (e >= ECS_HI_COMPONENT_ID) {
-            return traverse_add_hi_edges(world, node, i, to_add, added);
-        }
-
-        /* There should always be an edge for adding */
-        ecs_edge_t *edge = &node->lo_edges[e];
-        next = edge->add;
-
-        if (!next) {
-            next = find_or_create_table_include(world, node, e);
-            ecs_assert(next != NULL, ECS_INTERNAL_ERROR, NULL);
-            edge->add = next;
-        }
-
-        if (added && node != next) {
-            added->array[added->count ++] = e;
-        }
-
-        node = next;
     }
 
     return node;
@@ -18094,32 +18588,50 @@ ecs_table_t *find_or_create(
         ecs_size_t size = ECS_SIZEOF(ecs_entity_t) * type_count;
         ordered = ecs_os_alloca(size);
         ecs_os_memcpy(ordered, entities->array, size);
-        qsort(ordered, (size_t)type_count, sizeof(ecs_entity_t), ecs_entity_compare);
+        qsort(
+            ordered, (size_t)type_count, sizeof(ecs_entity_t), ecs_entity_compare);
         type_count = ecs_entity_array_dedup(ordered, type_count);
     } else {
         ordered = entities->array;
-    }    
+    }
 
-    /* Iterate tables, look if a table matches the type */
-    ecs_sparse_t *tables = world->store.tables;
-    int32_t i, count = ecs_sparse_count(tables);
-    for (i = 0; i < count; i ++) {
-        ecs_table_t *table = ecs_sparse_get(tables, ecs_table_t, i);
-        ecs_type_t type = table->type;
-        int32_t table_type_count = ecs_vector_count(type);
+    uint64_t hash = 0;
+    ecs_hash(ordered, entities->count * ECS_SIZEOF(ecs_entity_t), &hash);
+    ecs_vector_t *table_vec = ecs_map_get_ptr(
+        world->store.table_map, ecs_vector_t*, hash);
+    if (table_vec) {
+        /* Usually this will be just one, but in the case of a collision
+         * multiple tables can be stored using the same hash. */
+        int32_t i, count = ecs_vector_count(table_vec);
+        ecs_table_t *table, **tables = ecs_vector_first(
+            table_vec, ecs_table_t*);
 
-        /* If types do not contain same number of entities, table won't match */
-        if (table_type_count != type_count) {
-            continue;
+        for (i = 0; i < count; i ++) {
+            table = tables[i];
+            int32_t t, table_type_count = ecs_vector_count(table->type);
+
+            /* If number of components in table doesn't match, it's definitely
+             * a collision. */
+            if (table_type_count != type_count) {
+                table = NULL;
+                continue;
+            }
+
+            /* Check if components of table match */
+            ecs_entity_t *table_type = ecs_vector_first(
+                table->type, ecs_entity_t);
+            for (t = 0; t < type_count; t ++) {
+                if (table_type[t] != ordered[t]) {
+                    table = NULL;
+                    break;
+                }
+            }
+
+            if (table) {
+                return table;
+            }
         }
-
-        /* Memcmp the types, as they must match exactly */
-        ecs_entity_t *type_array = ecs_vector_first(type, ecs_entity_t);
-        if (!ecs_os_memcmp(ordered, type_array, type_count * ECS_SIZEOF(ecs_entity_t))) {
-            /* Table found */
-            return table;
-        }
-    }  
+    }
 
     ecs_entities_t ordered_entities = {
         .array = ordered,
@@ -18131,10 +18643,9 @@ ecs_table_t *find_or_create(
     verify_constraints(world, &ordered_entities);
 #endif
 
-    /* If we get here, the table has not been found. It has to be created. */
+    /* If we get here, the table has not been found, so create it. */
+    ecs_table_t *result = create_table(world, &ordered_entities, hash);
     
-    ecs_table_t *result = create_table(world, &ordered_entities);
-
     ecs_assert(ordered_entities.count == ecs_vector_count(result->type), 
         ECS_INTERNAL_ERROR, NULL);
 
@@ -18172,17 +18683,23 @@ void ecs_init_root_table(
 }
 
 void ecs_table_clear_edges(
+    ecs_world_t *world,
     ecs_table_t *table)
 {
+    (void)world;
+
     uint32_t i;
-    for (i = 0; i < ECS_HI_COMPONENT_ID; i ++) {
-        ecs_edge_t *e = &table->lo_edges[i];
-        ecs_table_t *add = e->add, *remove = e->remove;
-        if (add) {
-            add->lo_edges[i].remove = NULL;
-        }
-        if (remove) {
-            remove->lo_edges[i].add = NULL;
+
+    if (table->lo_edges) {
+        for (i = 0; i < ECS_HI_COMPONENT_ID; i ++) {
+            ecs_edge_t *e = &table->lo_edges[i];
+            ecs_table_t *add = e->add, *remove = e->remove;
+            if (add) {
+                add->lo_edges[i].remove = NULL;
+            }
+            if (remove) {
+                remove->lo_edges[i].add = NULL;
+            }
         }
     }
 
@@ -18210,35 +18727,20 @@ void ecs_table_clear_edges(
 
 #define LOAD_FACTOR (1.5)
 #define KEY_SIZE (ECS_SIZEOF(ecs_map_key_t))
-#define BUCKET_COUNT (8)
-#define ELEM_SIZE(elem_size) (KEY_SIZE + elem_size)
-#define BUCKET_SIZE(elem_size, offset)\
-    (offset + BUCKET_COUNT * (ELEM_SIZE(elem_size)))
-
-#define NEXT_ELEM(elem, elem_size) \
-    ECS_OFFSET(elem, ELEM_SIZE(elem_size))
-
 #define GET_ELEM(array, elem_size, index) \
-    ECS_OFFSET(array, ELEM_SIZE(elem_size) * index)
-
-#define PAYLOAD_ARRAY(bucket, offset) \
-    ECS_OFFSET(bucket, offset)
-
-#define PAYLOAD(elem) \
-    ECS_OFFSET(elem, KEY_SIZE)
+    ECS_OFFSET(array, (elem_size) * (index))
 
 struct ecs_bucket_t {
+    ecs_map_key_t *keys;
+    void *payload;
     int32_t count;
 };
 
 struct ecs_map_t {
-    ecs_sparse_t *buckets;
+    ecs_bucket_t *buckets;
     int32_t elem_size;
-    int32_t type_elem_size;
-    int32_t bucket_size;
     int32_t bucket_count;
     int32_t count;
-    int32_t offset;
 };
 
 static
@@ -18249,12 +18751,12 @@ int32_t get_bucket_count(
 }
 
 static
-uint64_t get_bucket_id(
+int32_t get_bucket_id(
     int32_t bucket_count,
     ecs_map_key_t key) 
 {
     ecs_assert(bucket_count > 0, ECS_INTERNAL_ERROR, NULL);
-    uint64_t result = key & ((uint64_t)bucket_count - 1);
+    int32_t result = (int32_t)(key & ((uint64_t)bucket_count - 1));
     ecs_assert(result < INT32_MAX, ECS_INTERNAL_ERROR, NULL);
     return result;
 }
@@ -18264,15 +18766,57 @@ ecs_bucket_t* find_bucket(
     const ecs_map_t *map,
     ecs_map_key_t key)
 {
-    ecs_sparse_t *buckets = map->buckets;
     int32_t bucket_count = map->bucket_count;
     if (!bucket_count) {
         return NULL;
     }
 
-    uint64_t bucket_id = get_bucket_id(bucket_count, key);
+    int32_t bucket_id = get_bucket_id(bucket_count, key);
+    ecs_assert(bucket_id < bucket_count, ECS_INTERNAL_ERROR, NULL);
 
-    return _ecs_sparse_get_sparse(buckets, 0, bucket_id);
+    return &map->buckets[bucket_id];
+}
+
+static
+void ensure_buckets(
+    ecs_map_t *map,
+    int32_t new_count)
+{
+    int32_t bucket_count = map->bucket_count;
+    new_count = ecs_next_pow_of_2(new_count);
+    if (new_count && new_count > bucket_count) {
+        map->buckets = ecs_os_realloc(map->buckets, new_count * ECS_SIZEOF(ecs_bucket_t));
+        map->bucket_count = new_count;
+
+        ecs_os_memset(
+            ECS_OFFSET(map->buckets, bucket_count * ECS_SIZEOF(ecs_bucket_t)), 
+            0, (new_count - bucket_count) * ECS_SIZEOF(ecs_bucket_t));
+    }
+}
+
+static
+void clear_bucket(
+    ecs_bucket_t *bucket)
+{
+    ecs_os_free(bucket->keys);
+    ecs_os_free(bucket->payload);
+    bucket->keys = NULL;
+    bucket->payload = NULL;
+    bucket->count = 0;
+}
+
+static
+void clear_buckets(
+    ecs_map_t *map)
+{
+    ecs_bucket_t *buckets = map->buckets;
+    int32_t i, count = map->bucket_count;
+    for (i = 0; i < count; i ++) {
+        clear_bucket(&buckets[i]);
+    }
+    ecs_os_free(buckets);
+    map->buckets = NULL;
+    map->bucket_count = 0;
 }
 
 static
@@ -18280,69 +18824,77 @@ ecs_bucket_t* find_or_create_bucket(
     ecs_map_t *map,
     ecs_map_key_t key)
 {
-    ecs_sparse_t *buckets = map->buckets;
-    int32_t bucket_count = map->bucket_count;
-
-    if (!bucket_count) {
-        ecs_sparse_set_size(buckets, 8);
-        bucket_count = 8;
+    if (!map->bucket_count) {
+        ensure_buckets(map, 2);
     }
 
-    uint64_t bucket_id = get_bucket_id(bucket_count, key);
-    return _ecs_sparse_get_or_create(buckets, 0, bucket_id);    
-}
-
-static
-void remove_bucket(
-    ecs_map_t *map,
-    ecs_map_key_t key)
-{
-    int32_t bucket_count = map->bucket_count;
-    uint64_t bucket_id = get_bucket_id(bucket_count, key);
-    ecs_sparse_remove(map->buckets, bucket_id);
-    ecs_sparse_set_generation(map->buckets, bucket_id);
+    int32_t bucket_id = get_bucket_id(map->bucket_count, key);
+    ecs_assert(bucket_id >= 0, ECS_INTERNAL_ERROR, NULL);
+    return &map->buckets[bucket_id];
 }
 
 static
 int32_t add_to_bucket(
     ecs_bucket_t *bucket,
     ecs_size_t elem_size,
-    int32_t offset,
     ecs_map_key_t key,
-    void *payload)
+    const void *payload)
 {
-    ecs_assert(bucket->count < BUCKET_COUNT, ECS_INTERNAL_ERROR, NULL);
+    int32_t index = bucket->count ++;
+    int32_t bucket_count = index + 1;
 
-    void *array = PAYLOAD_ARRAY(bucket, offset);
-    ecs_map_key_t *elem = GET_ELEM(array, elem_size, bucket->count);
-    *elem = key;
-    ecs_os_memcpy(PAYLOAD(elem), payload, elem_size);
-    return ++ bucket->count;
+    bucket->keys = ecs_os_realloc(bucket->keys, KEY_SIZE * bucket_count);
+    bucket->payload = ecs_os_realloc(bucket->payload, elem_size * bucket_count);
+    bucket->keys[index] = key;
+
+    if (payload) {
+        void *elem = GET_ELEM(bucket->payload, elem_size, index);
+        ecs_os_memcpy(elem, payload, elem_size);
+    }
+
+    return index;
 }
 
 static
 void remove_from_bucket(
     ecs_bucket_t *bucket,
-    ecs_map_key_t key,
     ecs_size_t elem_size,
-    int32_t offset,
+    ecs_map_key_t key,
     int32_t index)
 {
     (void)key;
 
     ecs_assert(bucket->count != 0, ECS_INTERNAL_ERROR, NULL);
     ecs_assert(index < bucket->count, ECS_INTERNAL_ERROR, NULL);
-
-    bucket->count--;
+    
+    int32_t bucket_count = -- bucket->count;
 
     if (index != bucket->count) {
-        void *array = PAYLOAD_ARRAY(bucket, offset);
-        ecs_map_key_t *elem = GET_ELEM(array, elem_size, index);
-        ecs_map_key_t *last_elem = GET_ELEM(array, elem_size, bucket->count);
+        ecs_assert(key == bucket->keys[index], ECS_INTERNAL_ERROR, NULL);
+        bucket->keys[index] = bucket->keys[bucket_count];
 
-        ecs_assert(key == *elem, ECS_INTERNAL_ERROR, NULL);
-        ecs_os_memcpy(elem, last_elem, ELEM_SIZE(elem_size));
+        ecs_map_key_t *elem = GET_ELEM(bucket->payload, elem_size, index);
+        ecs_map_key_t *last_elem = GET_ELEM(bucket->payload, elem_size, bucket->count);
+
+        ecs_os_memcpy(elem, last_elem, elem_size);
     }
+}
+
+static
+void* get_from_bucket(
+    ecs_bucket_t *bucket,
+    ecs_map_key_t key,
+    ecs_size_t elem_size)
+{
+    ecs_map_key_t *keys = bucket->keys;
+    int32_t i, count = bucket->count;
+
+    for (i = 0; i < count; i ++) {
+        if (keys[i] == key) {
+            return GET_ELEM(bucket->payload, elem_size, i);
+        }
+    }
+    return NULL;
 }
 
 static
@@ -18350,65 +18902,48 @@ void rehash(
     ecs_map_t *map,
     int32_t bucket_count)
 {
-    bool rehash_again;
-
     ecs_assert(bucket_count != 0, ECS_INTERNAL_ERROR, NULL);
     ecs_assert(bucket_count > map->bucket_count, ECS_INTERNAL_ERROR, NULL);
 
-    do {
-        rehash_again = false;
+    ecs_size_t elem_size = map->elem_size;
 
-        ecs_sparse_t *buckets = map->buckets;
-        ecs_size_t elem_size = map->elem_size;
-        int32_t offset = map->offset;
+    ensure_buckets(map, bucket_count);
 
-        ecs_sparse_set_size(buckets, bucket_count);
-        map->bucket_count = bucket_count;
+    ecs_bucket_t *buckets = map->buckets;
+    ecs_assert(buckets != NULL, ECS_INTERNAL_ERROR, NULL);
+    
+    int32_t bucket_id;
 
-        /* Only iterate over old buckets with elements */
-        int32_t b, filled_bucket_count = ecs_sparse_count(buckets);
-        const uint64_t *indices = ecs_sparse_ids(buckets);
+    /* Iterate backwards as elements could otherwise be moved to existing
+        * buckets which could temporarily cause the number of elements in a
+        * bucket to exceed BUCKET_COUNT. */
+    for (bucket_id = bucket_count - 1; bucket_id >= 0; bucket_id --) {
+        ecs_bucket_t *bucket = &buckets[bucket_id];
 
-        /* Iterate backwards as elements could otherwise be moved to existing
-         * buckets which could temporarily cause the number of elements in a
-         * bucket to exceed BUCKET_COUNT. */
-        for (b = filled_bucket_count - 1; b >= 0; b --) {
-            uint64_t bucket_id = indices[b];
-            ecs_bucket_t *bucket = _ecs_sparse_get_sparse(buckets, 0, bucket_id);
-            ecs_assert(bucket != NULL, ECS_INTERNAL_ERROR, NULL);
+        int i, count = bucket->count;
+        ecs_map_key_t *key_array = bucket->keys;
+        void *payload_array = bucket->payload;
 
-            int i, count = bucket->count;
-            ecs_map_key_t *array = PAYLOAD_ARRAY(bucket, offset);
+        for (i = 0; i < count; i ++) {
+            ecs_map_key_t key = key_array[i];
+            void *elem = GET_ELEM(payload_array, elem_size, i);
+            int32_t new_bucket_id = get_bucket_id(bucket_count, key);
 
-            for (i = 0; i < count; i ++) {
-                ecs_map_key_t *elem = GET_ELEM(array, elem_size, i);
-                ecs_map_key_t key = *elem;
-                uint64_t new_bucket_id = get_bucket_id(bucket_count, key);
+            if (new_bucket_id != bucket_id) {
+                ecs_bucket_t *new_bucket = &buckets[new_bucket_id];
 
-                if (new_bucket_id != bucket_id) {
-                    ecs_bucket_t *new_bucket = _ecs_sparse_get_or_create(
-                        buckets, 0, new_bucket_id);
-                    ecs_assert(new_bucket != NULL, ECS_INTERNAL_ERROR, NULL);
+                add_to_bucket(new_bucket, elem_size, key, elem);
+                remove_from_bucket(bucket, elem_size, key, i);
 
-                    indices = ecs_sparse_ids(buckets);
-                    ecs_assert(indices != NULL, ECS_INTERNAL_ERROR, NULL);
-
-                    if (add_to_bucket(new_bucket, elem_size, offset, 
-                        key, PAYLOAD(elem)) == BUCKET_COUNT) 
-                    {
-                        rehash_again = true;
-                    }
-
-                    remove_from_bucket(bucket, key, elem_size, offset, i);
-
-                    count --;
-                    i --;
-                }
+                count --;
+                i --;
             }
         }
 
-        bucket_count *= 2;        
-    } while (rehash_again);
+        if (!bucket->count) {
+            clear_bucket(bucket);
+        }
+    }
 }
 
 ecs_map_t* _ecs_map_new(
@@ -18416,28 +18951,17 @@ ecs_map_t* _ecs_map_new(
     ecs_size_t alignment, 
     int32_t element_count)
 {
+    (void)alignment;
+
     ecs_map_t *result = ecs_os_calloc(ECS_SIZEOF(ecs_map_t) * 1);
     ecs_assert(result != NULL, ECS_OUT_OF_MEMORY, NULL);
 
     int32_t bucket_count = get_bucket_count(element_count);
 
     result->count = 0;
-    result->type_elem_size = elem_size;
+    result->elem_size = elem_size;
 
-    if (elem_size < ECS_SIZEOF(ecs_map_key_t)) {
-        result->elem_size = ECS_SIZEOF(ecs_map_key_t);
-    } else {
-        result->elem_size = elem_size;
-    }
-    
-    if (alignment < ECS_SIZEOF(ecs_map_key_t)) {
-        result->offset = ECS_SIZEOF(ecs_map_key_t);
-    } else {
-        result->offset = alignment;
-    }
-
-    result->bucket_count = bucket_count;
-    result->buckets = _ecs_sparse_new(BUCKET_SIZE(elem_size, result->offset));
+    ensure_buckets(result, bucket_count);
 
     return result;
 }
@@ -18446,7 +18970,7 @@ void ecs_map_free(
     ecs_map_t *map)
 {
     if (map) {
-        ecs_sparse_free(map->buckets);
+        clear_buckets(map);
         ecs_os_free(map);
     }
 }
@@ -18462,26 +18986,14 @@ void* _ecs_map_get(
         return NULL;
     }
 
-    ecs_assert(elem_size == map->type_elem_size, ECS_INVALID_PARAMETER, NULL);
+    ecs_assert(elem_size == map->elem_size, ECS_INVALID_PARAMETER, NULL);
 
     ecs_bucket_t * bucket = find_bucket(map, key);
-
     if (!bucket) {
         return NULL;
     }
 
-    ecs_map_key_t *elem = PAYLOAD_ARRAY(bucket, map->offset);
-
-    uint8_t i = 0;
-    while (i++ < bucket->count) {
-        if (*elem == key) {
-            return PAYLOAD(elem);
-        }
-
-        elem = NEXT_ELEM(elem, map->elem_size);
-    }
-
-    return NULL;
+    return get_from_bucket(bucket, key, elem_size);
 }
 
 void* _ecs_map_get_ptr(
@@ -18497,63 +19009,54 @@ void* _ecs_map_get_ptr(
     }
 }
 
-void _ecs_map_set(
+void * _ecs_map_ensure(
+    ecs_map_t *map,
+    ecs_size_t elem_size,
+    ecs_map_key_t key)
+{
+    void *result = _ecs_map_get(map, elem_size, key);
+    if (!result) {
+        result = _ecs_map_set(map, elem_size, key, NULL);
+        ecs_assert(result != NULL, ECS_INTERNAL_ERROR, NULL);
+        ecs_os_memset(result, 0, elem_size);
+    }
+
+    return result;
+}
+
+void* _ecs_map_set(
     ecs_map_t *map,
     ecs_size_t elem_size,
     ecs_map_key_t key,
     const void *payload)
 {
     ecs_assert(map != NULL, ECS_INVALID_PARAMETER, NULL);
-    ecs_assert(elem_size == map->type_elem_size, ECS_INVALID_PARAMETER, NULL);
+    ecs_assert(elem_size == map->elem_size, ECS_INVALID_PARAMETER, NULL);
 
-    ecs_bucket_t * bucket = find_or_create_bucket(map, key);
+    ecs_bucket_t *bucket = find_or_create_bucket(map, key);
     ecs_assert(bucket != NULL, ECS_INTERNAL_ERROR, NULL);
-    
-    int32_t bucket_count = bucket->count;
-    void *array = PAYLOAD_ARRAY(bucket, map->offset);
-    ecs_map_key_t *elem = array, *found = NULL;
 
-    uint8_t i = 0;
-    while (i++ < bucket_count) {
-        if (*elem == key) {
-            found = elem;
-            break;
-        }
+    void *elem = get_from_bucket(bucket, key, elem_size);
+    if (!elem) {
+        int32_t index = add_to_bucket(bucket, elem_size, key, payload);
+        
+        int32_t map_count = ++map->count;
+        int32_t target_bucket_count = get_bucket_count(map_count);
+        int32_t map_bucket_count = map->bucket_count;
 
-        elem = NEXT_ELEM(elem, map->elem_size);
-    }
-
-    if (!found) {
-        if (bucket->count == BUCKET_COUNT) {
-            /* Can't fit in current bucket, need to grow the map first */
-            rehash(map, map->bucket_count * 2);
-            _ecs_map_set(map, elem_size, key, payload);
+        if (target_bucket_count > map_bucket_count) {
+            rehash(map, target_bucket_count);
+            bucket = find_or_create_bucket(map, key);
+            return get_from_bucket(bucket, key, elem_size);
         } else {
-            ecs_assert(bucket->count < BUCKET_COUNT, ECS_INTERNAL_ERROR, NULL);
-
-            bucket_count = ++bucket->count;
-            int32_t map_count = ++map->count;
-            
-            *elem = key;
-            ecs_os_memcpy(PAYLOAD(elem), payload, elem_size);
-
-            int32_t target_bucket_count = get_bucket_count(map_count);
-            int32_t map_bucket_count = map->bucket_count;
-
-            if (bucket_count == BUCKET_COUNT) {
-                rehash(map, map_bucket_count * 2);
-            } else {
-                if (target_bucket_count > map_bucket_count) {
-                    rehash(map, target_bucket_count);
-                }
-            }            
-        }
+            return GET_ELEM(bucket->payload, elem_size, index);
+        }       
     } else {
-        *found = key;
-        ecs_os_memcpy(PAYLOAD(found), payload, elem_size);
+        if (payload) {
+            ecs_os_memcpy(elem, payload, elem_size);
+        }
+        return elem;
     }
-
-    ecs_assert(map->bucket_count != 0, ECS_INTERNAL_ERROR, NULL);
 }
 
 void ecs_map_remove(
@@ -18566,34 +19069,14 @@ void ecs_map_remove(
     if (!bucket) {
         return;
     }
-   
-    ecs_size_t elem_size = map->elem_size;
-    void *array = PAYLOAD_ARRAY(bucket, map->offset);
-    ecs_map_key_t *elem = array;
-    int32_t bucket_count = bucket->count;
 
-    if (!bucket_count) {
-        return;
-    }
-
-    uint8_t i = 0;
-    do {
-        if (*elem == key) {
-            ecs_map_key_t *last_elem = GET_ELEM(array, elem_size, (bucket_count - 1));
-            if (last_elem > elem) {
-                ecs_os_memcpy(elem, last_elem, ELEM_SIZE(elem_size));
-            }
-
+    int32_t i, bucket_count = bucket->count;
+    for (i = 0; i < bucket_count; i ++) {
+        if (bucket->keys[i] == key) {
+            remove_from_bucket(bucket, map->elem_size, key, i);
             map->count --;
-            if (!--bucket->count) {
-                remove_bucket(map, key);
-            }
-
-            break;
         }
-
-        elem = NEXT_ELEM(elem, elem_size);
-    } while (++i < bucket_count);   
+    } 
 }
 
 int32_t ecs_map_count(
@@ -18612,15 +19095,13 @@ void ecs_map_clear(
     ecs_map_t *map)
 {
     ecs_assert(map != NULL, ECS_INVALID_PARAMETER, NULL);
-    ecs_sparse_clear(map->buckets);
+    clear_buckets(map);
     map->count = 0;
 }
 
 ecs_map_iter_t ecs_map_iter(
     const ecs_map_t *map)
 {
-    ecs_assert(map != NULL, ECS_INVALID_PARAMETER, NULL);
-
     return (ecs_map_iter_t){
         .map = map,
         .bucket = NULL,
@@ -18635,9 +19116,11 @@ void* _ecs_map_next(
     ecs_map_key_t *key_out)
 {
     const ecs_map_t *map = iter->map;
+    if (!map) {
+        return NULL;
+    }
     
-    ecs_assert(map != NULL, ECS_INVALID_PARAMETER, NULL);
-    ecs_assert(!elem_size || elem_size == map->type_elem_size, ECS_INVALID_PARAMETER, NULL);
+    ecs_assert(!elem_size || elem_size == map->elem_size, ECS_INVALID_PARAMETER, NULL);
  
     ecs_bucket_t *bucket = iter->bucket;
     int32_t element_index = iter->element_index;
@@ -18646,9 +19129,9 @@ void* _ecs_map_next(
     do {
         if (!bucket) {
             int32_t bucket_index = iter->bucket_index;
-            ecs_sparse_t *buckets = map->buckets;
-            if (bucket_index < ecs_sparse_count(buckets)) {
-                bucket = _ecs_sparse_get(buckets, 0, bucket_index);
+            ecs_bucket_t *buckets = map->buckets;
+            if (bucket_index < map->bucket_count) {
+                bucket = &buckets[bucket_index];
                 iter->bucket = bucket;
 
                 element_index = 0;
@@ -18666,15 +19149,12 @@ void* _ecs_map_next(
             iter->bucket_index ++;
         }
     } while (true);
-
-    void *array = PAYLOAD_ARRAY(bucket, map->offset);
-    ecs_map_key_t *elem = GET_ELEM(array, elem_size, element_index);
     
     if (key_out) {
-        *key_out = *elem;
+        *key_out = bucket->keys[element_index];
     }
 
-    return PAYLOAD(elem);
+    return GET_ELEM(bucket->payload, elem_size, element_index);
 }
 
 void* _ecs_map_next_ptr(
@@ -18720,25 +19200,23 @@ void ecs_map_memory(
     int32_t *used)
 {
     ecs_assert(map != NULL, ECS_INVALID_PARAMETER, NULL);
-    ecs_sparse_memory(map->buckets, allocd, NULL);
 
     if (used) {
-        *used = map->count * ELEM_SIZE(map->elem_size);
+        *used = map->count * map->elem_size;
     }
-}
 
-ecs_map_t* ecs_map_copy(
-    const ecs_map_t *src)
-{
-    if (!src) {
-        return NULL;
+    if (allocd) {
+        *allocd += ECS_SIZEOF(ecs_map_t);
+
+        int i, bucket_count = map->bucket_count;
+        for (i = 0; i < bucket_count; i ++) {
+            ecs_bucket_t *bucket = &map->buckets[i];
+            *allocd += KEY_SIZE * bucket->count;
+            *allocd += map->elem_size * bucket->count;
+        }
+
+        *allocd += ECS_SIZEOF(ecs_bucket_t) * bucket_count;
     }
-    
-    ecs_map_t *dst = ecs_os_memdup(src, ECS_SIZEOF(ecs_map_t));
-    
-    dst->buckets = ecs_sparse_copy(src->buckets);
-
-    return dst;
 }
 
 static
@@ -19604,9 +20082,9 @@ static ECS_DTOR(EcsPipelineQuery, ptr, {
 static
 int compare_entity(
     ecs_entity_t e1, 
-    void *ptr1, 
+    const void *ptr1, 
     ecs_entity_t e2, 
-    void *ptr2) 
+    const void *ptr2) 
 {
     (void)ptr1;
     (void)ptr2;
@@ -19947,7 +20425,7 @@ void ecs_pipeline_progress(
         int32_t i;
         for(i = 0; i < it.count; i ++) {
             ecs_entity_t e = it.entities[i];
-            
+
             ecs_run_intern(world, stage, e, &sys[i], delta_time, 0, 0, 
                 NULL, NULL, false);
 

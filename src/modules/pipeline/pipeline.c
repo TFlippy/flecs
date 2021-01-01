@@ -17,9 +17,9 @@ static ECS_DTOR(EcsPipelineQuery, ptr, {
 static
 int compare_entity(
     ecs_entity_t e1, 
-    void *ptr1, 
+    const void *ptr1, 
     ecs_entity_t e2, 
-    void *ptr2) 
+    const void *ptr2) 
 {
     (void)ptr1;
     (void)ptr2;
@@ -360,7 +360,7 @@ void ecs_pipeline_progress(
         int32_t i;
         for(i = 0; i < it.count; i ++) {
             ecs_entity_t e = it.entities[i];
-            
+
             ecs_run_intern(world, stage, e, &sys[i], delta_time, 0, 0, 
                 NULL, NULL, false);
 

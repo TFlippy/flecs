@@ -161,6 +161,9 @@ void Query_subquery_w_expr(void);
 void Query_query_single_trait(void);
 void Query_tag_w_each(void);
 void Query_shared_tag_w_each(void);
+void Query_sort_by(void);
+void Query_changed(void);
+void Query_orphaned(void);
 
 // Testsuite 'ComponentLifecycle'
 void ComponentLifecycle_ctor_on_add(void);
@@ -176,6 +179,7 @@ void ComponentLifecycle_get_mut_existing(void);
 void ComponentLifecycle_pod_component(void);
 void ComponentLifecycle_relocatable_component(void);
 void ComponentLifecycle_implicit_component(void);
+void ComponentLifecycle_implicit_after_query(void);
 
 // Testsuite 'Refs'
 void Refs_get_ref(void);
@@ -819,6 +823,18 @@ bake_test_case Query_testcases[] = {
     {
         "shared_tag_w_each",
         Query_shared_tag_w_each
+    },
+    {
+        "sort_by",
+        Query_sort_by
+    },
+    {
+        "changed",
+        Query_changed
+    },
+    {
+        "orphaned",
+        Query_orphaned
     }
 };
 
@@ -874,6 +890,10 @@ bake_test_case ComponentLifecycle_testcases[] = {
     {
         "implicit_component",
         ComponentLifecycle_implicit_component
+    },
+    {
+        "implicit_after_query",
+        ComponentLifecycle_implicit_after_query
     }
 };
 
@@ -1172,14 +1192,14 @@ static bake_test_suite suites[] = {
         "Query",
         NULL,
         NULL,
-        17,
+        20,
         Query_testcases
     },
     {
         "ComponentLifecycle",
         NULL,
         NULL,
-        13,
+        14,
         ComponentLifecycle_testcases
     },
     {
