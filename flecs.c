@@ -4528,6 +4528,8 @@ void ecs_components_override(
 
 static
 void set_switch(
+    ecs_world_t *world,
+    ecs_table_t *table,
     ecs_data_t * data,
     int32_t row,
     int32_t count,    
@@ -4545,11 +4547,12 @@ void set_switch(
 
             ecs_entity_t sw_case = 0;
             if (!reset) {
-                sw_case = ecs_entity_t_lo(e);
+                sw_case = e;
                 ecs_assert(sw_case != 0, ECS_INTERNAL_ERROR, NULL);
             }
 
-            ecs_entity_t sw_index = ecs_entity_t_hi(e);
+            int32_t sw_index = ecs_table_switch_from_case(world, table, e);
+            ecs_assert(sw_index != -1, ECS_INTERNAL_ERROR, NULL);
             ecs_switch_t *sw = data->sw_columns[sw_index].data;
             ecs_assert(sw != NULL, ECS_INTERNAL_ERROR, NULL);
             
@@ -4563,20 +4566,19 @@ void set_switch(
 
 static
 void ecs_components_switch(
-    ecs_world_t * world,
-    ecs_data_t * data,
+    ecs_world_t *world,
+    ecs_table_t *table,
+    ecs_data_t *data,
     int32_t row,
     int32_t count,
-    ecs_entities_t * added,
-    ecs_entities_t * removed)
+    ecs_entities_t *added,
+    ecs_entities_t *removed)
 {
-    (void)world;
-
     if (added) {
-        set_switch(data, row, count, added, false);
+        set_switch(world, table, data, row, count, added, false);
     }
     if (removed) {
-        set_switch(data, row, count, removed, true);
+        set_switch(world, table, data, row, count, removed, true);
     } 
 }
 
@@ -4656,7 +4658,7 @@ void ecs_run_add_actions(
     }
 
     if (table->flags & EcsTableHasSwitch) {
-        ecs_components_switch(world, data, row, count, added, NULL);
+        ecs_components_switch(world, table, data, row, count, added, NULL);
     }
 
     if (table->flags & EcsTableHasOnAdd) {
@@ -4921,7 +4923,7 @@ void commit(
              src_table && src_table->flags & EcsTableHasSwitch) 
         {
             ecs_components_switch(
-                world, info->data, info->row, 1, added, removed);
+                world, src_table, info->data, info->row, 1, added, removed);
         }
 
         return;
@@ -7471,9 +7473,16 @@ ecs_vector_t* _ecs_vector_copy(
     return dst;
 }
 
+/** The number of elements in a single chunk */
 #define CHUNK_COUNT (4096)
+
+/** Compute the chunk index from an id by stripping the first 12 bits */
 #define CHUNK(index) ((int32_t)index >> 12)
+
+/** This computes the offset of an index inside a chunk */
 #define OFFSET(index) ((int32_t)index & 0xFFF)
+
+/* Utility to get a pointer to the payload */
 #define DATA(array, size, offset) (ECS_OFFSET(array, size * offset))
 
 typedef struct chunk_t {
@@ -7594,6 +7603,8 @@ void assign_index(
     uint64_t index, 
     int32_t dense)
 {
+    /* Initialize sparse-dense pair. This assigns the dense index to the sparse
+     * array, and the sparse index to the dense array .*/
     chunk->sparse[OFFSET(index)] = dense;
     dense_array[dense] = index;
 }
@@ -7602,6 +7613,8 @@ static
 uint64_t inc_gen(
     uint64_t index)
 {
+    /* When an index is deleted, its generation is increased so that we can do
+     * liveliness checking while recycling ids */
     return ECS_GENERATION_INC(index);
 }
 
@@ -7609,6 +7622,9 @@ static
 uint64_t inc_id(
     ecs_sparse_t *sparse)
 {
+    /* Generate a new id. The last issued id could be stored in an external
+     * variable, such as is the case with the last issued entity id, which is
+     * stored on the world. */
     return ++ (sparse->max_id[0]);
 }
 
@@ -7624,9 +7640,13 @@ void set_id(
     ecs_sparse_t *sparse,
     uint64_t value)
 {
+    /* Sometimes the max id needs to be assigned directly, which typically 
+     * happens when the API calls get_or_create for an id that hasn't been 
+     * issued before. */
     sparse->max_id[0] = value;
 }
 
+/* Pair dense id with new sparse id */
 static
 uint64_t create_id(
     ecs_sparse_t *sparse,
@@ -7644,6 +7664,7 @@ uint64_t create_id(
     return index;
 }
 
+/* Create new id */
 static
 uint64_t new_index(
     ecs_sparse_t *sparse)
@@ -7663,6 +7684,8 @@ uint64_t new_index(
     }
 }
 
+/* Try obtaining a value from the sparse set, don't care about whether the
+ * provided index matches the current generation count.  */
 static
 void* try_sparse_any(
     const ecs_sparse_t *sparse,
@@ -7686,6 +7709,7 @@ void* try_sparse_any(
     return DATA(chunk->data, sparse->size, offset);
 }
 
+/* Try obtaining a value from the sparse set, make sure it's alive. */
 static
 void* try_sparse(
     const ecs_sparse_t *sparse,
@@ -7715,6 +7739,8 @@ void* try_sparse(
     return DATA(chunk->data, sparse->size, offset);
 }
 
+/* Get value from sparse set when it is guaranteed that the value exists. This
+ * function is used when values are obtained using a dense index */
 static
 void* get_sparse(
     const ecs_sparse_t *sparse,
@@ -7732,6 +7758,8 @@ void* get_sparse(
     return DATA(chunk->data, sparse->size, offset);
 }
 
+/* Swap dense elements. A swap occurs when an element is removed, or when a
+ * removed element is recycled. */
 static
 void swap_dense(
     ecs_sparse_t * sparse,
@@ -10613,6 +10641,15 @@ ecs_record_t* ecs_record_find(
     }
 }
 
+ecs_record_t* ecs_record_ensure(
+    ecs_world_t *world,
+    ecs_entity_t entity)
+{
+    ecs_record_t *r = ecs_eis_get_or_create(world, entity);
+    ecs_assert(r != NULL, ECS_INTERNAL_ERROR, NULL);
+    return r;
+}
+
 ecs_record_t ecs_table_insert(
     ecs_world_t *world,
     ecs_table_t *table,
@@ -10645,7 +10682,7 @@ ecs_vector_t* ecs_table_get_column(
     return c ? c->data : NULL;
 }
 
-void ecs_table_set_column(
+ecs_vector_t* ecs_table_set_column(
     ecs_world_t *world,
     ecs_table_t *table,
     int32_t column,
@@ -10654,8 +10691,21 @@ void ecs_table_set_column(
     ecs_column_t *c = da_get_or_create_column(world, table, column);
     if (vector) {
         ecs_vector_assert_size(vector, c->size);
+    } else {
+        ecs_vector_t *entities = ecs_table_get_entities(table);
+        if (entities) {
+            int32_t count = ecs_vector_count(entities);
+            vector = ecs_table_get_column(table, column);
+            if (!vector) {
+                vector = ecs_vector_new_t(c->size, c->alignment, count);
+            } else {
+                ecs_vector_set_count_t(&vector, c->size, c->alignment, count);
+            }
+        }
     }
     c->data = vector;
+    
+    return vector;
 }
 
 ecs_vector_t* ecs_table_get_entities(
@@ -10700,6 +10750,41 @@ void ecs_table_set_entities(
     data->record_ptrs = records;
 }
 
+void ecs_records_clear(
+    ecs_vector_t *records)
+{
+    int32_t i, count = ecs_vector_count(records);
+    ecs_record_t **r = ecs_vector_first(records, ecs_record_t*);
+
+    for (i = 0; i < count; i ++) {
+        r[i]->table = NULL;
+        if (r[i]->row < 0) {
+            r[i]->row = -1;
+        } else {
+            r[i]->row = 0;
+        }
+    }
+}
+
+void ecs_records_update(
+    ecs_world_t *world,
+    ecs_vector_t *entities,
+    ecs_vector_t *records,
+    ecs_table_t *table)
+{
+    int32_t i, count = ecs_vector_count(records);
+    ecs_entity_t *e = ecs_vector_first(entities, ecs_entity_t);
+    ecs_record_t **r = ecs_vector_first(records, ecs_record_t*);
+
+    for (i = 0; i < count; i ++) {
+        r[i] = ecs_record_ensure(world, e[i]);
+        ecs_assert(r[i] != NULL, ECS_INTERNAL_ERROR, NULL);
+
+        r[i]->table = table;
+        r[i]->row = i + 1;
+    }    
+}
+
 void ecs_table_delete_column(
     ecs_world_t *world,
     ecs_table_t *table,
@@ -10730,6 +10815,10 @@ void ecs_table_delete_column(
         void *ptr = ecs_vector_first_t(vector, c->size, alignment);
         dtor(world, c_info->component, entities, ptr, ecs_to_size_t(c->size), 
             count, c_info->lifecycle.ctx);
+    }
+
+    if (c->data == vector) {
+        c->data = NULL;
     }
 
     ecs_vector_free(vector);
@@ -11970,6 +12059,8 @@ ecs_switch_header_t *get_header(
         return NULL;
     }
 
+    value = (uint32_t)value;
+
     ecs_assert(value >= sw->min, ECS_INTERNAL_ERROR, NULL);
     ecs_assert(value <= sw->max, ECS_INTERNAL_ERROR, NULL);
 
@@ -11991,7 +12082,8 @@ void remove_node(
         /* If this is the first node, update the header */
         hdr->element = node->next;
     } else {
-        /* If this is not the first node, update the previous node */
+        /* If this is not the first node, update the previous node to the 
+         * removed node's next ptr */
         ecs_assert(node->prev != -1, ECS_INVALID_PARAMETER, NULL);
         ecs_switch_node_t *prev_node = &nodes[node->prev];
         prev_node->next = node->next;
@@ -12000,7 +12092,8 @@ void remove_node(
     int32_t next = node->next;
     if (next != -1) {
         ecs_assert(next >= 0, ECS_INVALID_PARAMETER, NULL);
-        /* If this is not the last node, update the next node */
+        /* If this is not the last node, update the next node to point to the
+         * removed node's prev ptr */
         ecs_switch_node_t *next_node = &nodes[next];
         next_node->prev = node->prev;
     }
@@ -12022,8 +12115,8 @@ ecs_switch_t* ecs_switch_new(
     ecs_assert(min > 0, ECS_INVALID_PARAMETER, NULL);
 
     ecs_switch_t *result = ecs_os_malloc(ECS_SIZEOF(ecs_switch_t));
-    result->min = min;
-    result->max = max;
+    result->min = (uint32_t)min;
+    result->max = (uint32_t)max;
 
     int32_t count = (int32_t)(max - min) + 1;
     result->headers = ecs_os_calloc(ECS_SIZEOF(ecs_switch_header_t) * count);
@@ -12189,12 +12282,29 @@ void ecs_switch_remove(
     ecs_vector_remove_index(sw->nodes, ecs_switch_node_t, element);
     ecs_vector_remove_index(sw->values, uint64_t, element);
 
-    if (ecs_vector_count(sw->nodes)) {
+    /* When the element was removed and the list was not empty, the last element
+     * of the list got moved to the location of the removed node. Update the
+     * linked list so that nodes that previously pointed to the last element
+     * point to the moved node. 
+     *
+     * The 'node' variable is guaranteed to point to the moved element, if the
+     * nodes list is not empty.
+     *
+     * If count is equal to the removed index, nothing needs to be done.
+     */
+    int32_t count = ecs_vector_count(sw->nodes);
+    if (count != 0 && count != element) {
         int32_t prev = node->prev;
         if (prev != -1) {
+            /* If the former last node was not the first node, update its
+             * prev to point to its new index, which is the index of the removed
+             * element. */
             ecs_assert(prev >= 0, ECS_INVALID_PARAMETER, NULL);
             nodes[prev].next = element;
         } else {
+            /* If the former last node was the first node of its kind, find the
+             * header for the value of the node. The header should have at
+             * least one element. */
             ecs_switch_header_t *hdr = get_header(sw, values[element]);
             if (hdr && hdr->element != -1) {
                 ecs_assert(hdr->element == ecs_vector_count(sw->nodes), 
@@ -12253,9 +12363,9 @@ int32_t ecs_switch_first(
     uint64_t value)
 {
     ecs_assert(sw != NULL, ECS_INVALID_PARAMETER, NULL);
-    ecs_assert(value <= sw->max, ECS_INVALID_PARAMETER, NULL);
-    ecs_assert(value >= sw->min, ECS_INVALID_PARAMETER, NULL);
-
+    ecs_assert((uint32_t)value <= sw->max, ECS_INVALID_PARAMETER, NULL);
+    ecs_assert((uint32_t)value >= sw->min, ECS_INVALID_PARAMETER, NULL);
+    
     ecs_switch_header_t *hdr = get_header(sw, value);
     ecs_assert(hdr != NULL, ECS_INVALID_PARAMETER, NULL);
 
@@ -18336,12 +18446,6 @@ ecs_table_t* ecs_table_traverse_remove(
 
         bool has_case = ECS_HAS_ROLE(e, CASE);
         if (removed && (node != next || has_case)) {
-            /* If this is a case, find switch and encode it in added id */
-            if (has_case) {
-                int32_t s_case = ecs_table_switch_from_case(world, node, e);
-                ecs_assert(s_case != -1, ECS_INTERNAL_ERROR, NULL);
-                e = ECS_CASE | ecs_entity_t_comb(e, s_case);
-            }
             removed->array[removed->count ++] = e; 
         }
 
@@ -18421,12 +18525,6 @@ ecs_table_t* ecs_table_traverse_add(
 
         bool has_case = ECS_HAS_ROLE(e, CASE);
         if (added && (node != next || has_case)) {
-            /* If this is a case, find switch and encode it in added id */
-            if (has_case) {
-                int32_t s_case = ecs_table_switch_from_case(world, node, e);
-                ecs_assert(s_case != -1, ECS_INTERNAL_ERROR, NULL);
-                e = ECS_CASE | ecs_entity_t_comb(e, s_case);
-            }
             added->array[added->count ++] = e; 
         }
 
@@ -18725,15 +18823,17 @@ void ecs_table_clear_edges(
     }
 }
 
+/* The ratio used to determine whether the map should rehash. If
+ * (element_count * LOAD_FACTOR) > bucket_count, bucket count is increased. */
 #define LOAD_FACTOR (1.5)
 #define KEY_SIZE (ECS_SIZEOF(ecs_map_key_t))
 #define GET_ELEM(array, elem_size, index) \
     ECS_OFFSET(array, (elem_size) * (index))
 
 struct ecs_bucket_t {
-    ecs_map_key_t *keys;
-    void *payload;
-    int32_t count;
+    ecs_map_key_t *keys;    /* Array with keys */
+    void *payload;          /* Payload array */
+    int32_t count;          /* Number of elements in bucket */
 };
 
 struct ecs_map_t {
@@ -18743,6 +18843,7 @@ struct ecs_map_t {
     int32_t count;
 };
 
+/* Get bucket count for number of elements */
 static
 int32_t get_bucket_count(
     int32_t element_count)
@@ -18750,6 +18851,7 @@ int32_t get_bucket_count(
     return ecs_next_pow_of_2((int32_t)((float)element_count * LOAD_FACTOR));
 }
 
+/* Get bucket index for provided map key */
 static
 int32_t get_bucket_id(
     int32_t bucket_count,
@@ -18761,8 +18863,9 @@ int32_t get_bucket_id(
     return result;
 }
 
+/* Get bucket for key */
 static
-ecs_bucket_t* find_bucket(
+ecs_bucket_t* get_bucket(
     const ecs_map_t *map,
     ecs_map_key_t key)
 {
@@ -18777,6 +18880,7 @@ ecs_bucket_t* find_bucket(
     return &map->buckets[bucket_id];
 }
 
+/* Ensure that map has at least new_count buckets */
 static
 void ensure_buckets(
     ecs_map_t *map,
@@ -18794,6 +18898,7 @@ void ensure_buckets(
     }
 }
 
+/* Free contents of bucket */
 static
 void clear_bucket(
     ecs_bucket_t *bucket)
@@ -18805,6 +18910,7 @@ void clear_bucket(
     bucket->count = 0;
 }
 
+/* Clear all buckets */
 static
 void clear_buckets(
     ecs_map_t *map)
@@ -18819,8 +18925,9 @@ void clear_buckets(
     map->bucket_count = 0;
 }
 
+/* Find or create bucket for specified key */
 static
-ecs_bucket_t* find_or_create_bucket(
+ecs_bucket_t* ensure_bucket(
     ecs_map_t *map,
     ecs_map_key_t key)
 {
@@ -18833,6 +18940,7 @@ ecs_bucket_t* find_or_create_bucket(
     return &map->buckets[bucket_id];
 }
 
+/* Add element to bucket */
 static
 int32_t add_to_bucket(
     ecs_bucket_t *bucket,
@@ -18855,6 +18963,7 @@ int32_t add_to_bucket(
     return index;
 }
 
+/*  Remove element from bucket */
 static
 void remove_from_bucket(
     ecs_bucket_t *bucket,
@@ -18880,6 +18989,7 @@ void remove_from_bucket(
     }
 }
 
+/* Get payload pointer for key from bucket */
 static
 void* get_from_bucket(
     ecs_bucket_t *bucket,
@@ -18897,6 +19007,7 @@ void* get_from_bucket(
     return NULL;
 }
 
+/* Grow number of buckets */
 static
 void rehash(
     ecs_map_t *map,
@@ -18988,7 +19099,7 @@ void* _ecs_map_get(
 
     ecs_assert(elem_size == map->elem_size, ECS_INVALID_PARAMETER, NULL);
 
-    ecs_bucket_t * bucket = find_bucket(map, key);
+    ecs_bucket_t * bucket = get_bucket(map, key);
     if (!bucket) {
         return NULL;
     }
@@ -19033,7 +19144,7 @@ void* _ecs_map_set(
     ecs_assert(map != NULL, ECS_INVALID_PARAMETER, NULL);
     ecs_assert(elem_size == map->elem_size, ECS_INVALID_PARAMETER, NULL);
 
-    ecs_bucket_t *bucket = find_or_create_bucket(map, key);
+    ecs_bucket_t *bucket = ensure_bucket(map, key);
     ecs_assert(bucket != NULL, ECS_INTERNAL_ERROR, NULL);
 
     void *elem = get_from_bucket(bucket, key, elem_size);
@@ -19046,7 +19157,7 @@ void* _ecs_map_set(
 
         if (target_bucket_count > map_bucket_count) {
             rehash(map, target_bucket_count);
-            bucket = find_or_create_bucket(map, key);
+            bucket = ensure_bucket(map, key);
             return get_from_bucket(bucket, key, elem_size);
         } else {
             return GET_ELEM(bucket->payload, elem_size, index);
@@ -19065,7 +19176,7 @@ void ecs_map_remove(
 {
     ecs_assert(map != NULL, ECS_INVALID_PARAMETER, NULL);
 
-    ecs_bucket_t * bucket = find_bucket(map, key);
+    ecs_bucket_t * bucket = get_bucket(map, key);
     if (!bucket) {
         return;
     }

@@ -9,6 +9,8 @@ ecs_switch_header_t *get_header(
         return NULL;
     }
 
+    value = (uint32_t)value;
+
     ecs_assert(value >= sw->min, ECS_INTERNAL_ERROR, NULL);
     ecs_assert(value <= sw->max, ECS_INTERNAL_ERROR, NULL);
 
@@ -30,7 +32,8 @@ void remove_node(
         /* If this is the first node, update the header */
         hdr->element = node->next;
     } else {
-        /* If this is not the first node, update the previous node */
+        /* If this is not the first node, update the previous node to the 
+         * removed node's next ptr */
         ecs_assert(node->prev != -1, ECS_INVALID_PARAMETER, NULL);
         ecs_switch_node_t *prev_node = &nodes[node->prev];
         prev_node->next = node->next;
@@ -39,7 +42,8 @@ void remove_node(
     int32_t next = node->next;
     if (next != -1) {
         ecs_assert(next >= 0, ECS_INVALID_PARAMETER, NULL);
-        /* If this is not the last node, update the next node */
+        /* If this is not the last node, update the next node to point to the
+         * removed node's prev ptr */
         ecs_switch_node_t *next_node = &nodes[next];
         next_node->prev = node->prev;
     }
@@ -61,8 +65,8 @@ ecs_switch_t* ecs_switch_new(
     ecs_assert(min > 0, ECS_INVALID_PARAMETER, NULL);
 
     ecs_switch_t *result = ecs_os_malloc(ECS_SIZEOF(ecs_switch_t));
-    result->min = min;
-    result->max = max;
+    result->min = (uint32_t)min;
+    result->max = (uint32_t)max;
 
     int32_t count = (int32_t)(max - min) + 1;
     result->headers = ecs_os_calloc(ECS_SIZEOF(ecs_switch_header_t) * count);
@@ -228,12 +232,29 @@ void ecs_switch_remove(
     ecs_vector_remove_index(sw->nodes, ecs_switch_node_t, element);
     ecs_vector_remove_index(sw->values, uint64_t, element);
 
-    if (ecs_vector_count(sw->nodes)) {
+    /* When the element was removed and the list was not empty, the last element
+     * of the list got moved to the location of the removed node. Update the
+     * linked list so that nodes that previously pointed to the last element
+     * point to the moved node. 
+     *
+     * The 'node' variable is guaranteed to point to the moved element, if the
+     * nodes list is not empty.
+     *
+     * If count is equal to the removed index, nothing needs to be done.
+     */
+    int32_t count = ecs_vector_count(sw->nodes);
+    if (count != 0 && count != element) {
         int32_t prev = node->prev;
         if (prev != -1) {
+            /* If the former last node was not the first node, update its
+             * prev to point to its new index, which is the index of the removed
+             * element. */
             ecs_assert(prev >= 0, ECS_INVALID_PARAMETER, NULL);
             nodes[prev].next = element;
         } else {
+            /* If the former last node was the first node of its kind, find the
+             * header for the value of the node. The header should have at
+             * least one element. */
             ecs_switch_header_t *hdr = get_header(sw, values[element]);
             if (hdr && hdr->element != -1) {
                 ecs_assert(hdr->element == ecs_vector_count(sw->nodes), 
@@ -292,9 +313,9 @@ int32_t ecs_switch_first(
     uint64_t value)
 {
     ecs_assert(sw != NULL, ECS_INVALID_PARAMETER, NULL);
-    ecs_assert(value <= sw->max, ECS_INVALID_PARAMETER, NULL);
-    ecs_assert(value >= sw->min, ECS_INVALID_PARAMETER, NULL);
-
+    ecs_assert((uint32_t)value <= sw->max, ECS_INVALID_PARAMETER, NULL);
+    ecs_assert((uint32_t)value >= sw->min, ECS_INVALID_PARAMETER, NULL);
+    
     ecs_switch_header_t *hdr = get_header(sw, value);
     ecs_assert(hdr != NULL, ECS_INVALID_PARAMETER, NULL);
 

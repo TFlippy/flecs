@@ -104,6 +104,7 @@ void Switch_get_case_change(void);
 void Switch_new_w_type(void);
 void Switch_add_w_type(void);
 void Switch_remove_case(void);
+void Switch_remove_last(void);
 void Switch_bulk_new_w_type(void);
 void Switch_3_entities_same_case(void);
 void Switch_2_entities_1_change_case(void);
@@ -125,6 +126,8 @@ void Switch_zero_entity_has_case(void);
 void Switch_add_to_entity_w_switch(void);
 void Switch_add_trait_to_entity_w_switch(void);
 void Switch_sort(void);
+void Switch_recycled_tags(void);
+void Switch_query_recycled_tags(void);
 
 // Testsuite 'EnabledComponents'
 void EnabledComponents_is_component_enabled(void);
@@ -1831,6 +1834,10 @@ bake_test_case Switch_testcases[] = {
         Switch_remove_case
     },
     {
+        "remove_last",
+        Switch_remove_last
+    },
+    {
         "bulk_new_w_type",
         Switch_bulk_new_w_type
     },
@@ -1913,6 +1920,14 @@ bake_test_case Switch_testcases[] = {
     {
         "sort",
         Switch_sort
+    },
+    {
+        "recycled_tags",
+        Switch_recycled_tags
+    },
+    {
+        "query_recycled_tags",
+        Switch_query_recycled_tags
     }
 };
 
@@ -6964,7 +6979,7 @@ static bake_test_suite suites[] = {
         "Switch",
         Switch_setup,
         NULL,
-        29,
+        32,
         Switch_testcases
     },
     {
