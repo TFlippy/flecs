@@ -390,7 +390,7 @@ void ecs_run_monitors(
                 }
             }
 
-            if (src->query->system == system) {
+            if (src != NULL && src->query->system == system) {
                 continue;
             }
 
