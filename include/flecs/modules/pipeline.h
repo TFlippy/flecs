@@ -1,5 +1,23 @@
+/**
+ * @file pipeline.h
+ * @brief Pipeline module.
+ *
+ * The pipeline module provides support for running systems automatically and
+ * on multiple threads. A pipeline is a collection of tags that can be added to
+ * systems. When ran, a pipeline will query for all systems that have the tags
+ * that belong to a pipeline, and run them.
+ *
+ * The module defines a number of builtin tags (EcsPreUpdate, EcsOnUpdate, 
+ * EcsPostUpdate etc.) that are registered with the builtin pipeline. The 
+ * builtin pipeline is ran by default when calling ecs_progress(). An 
+ * application can set a custom pipeline with the ecs_set_pipeline function.
+ */
+
 #ifdef FLECS_PIPELINE
+
+#ifndef FLECS_SYSTEM
 #define FLECS_SYSTEM
+#endif
 
 #include "system.h"
 
@@ -9,10 +27,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-////////////////////////////////////////////////////////////////////////////////
-//// Pipeline API
-////////////////////////////////////////////////////////////////////////////////
 
 #ifndef FLECS_LEGACY
 #define ECS_PIPELINE(world, name, ...) \
@@ -62,26 +76,6 @@ FLECS_API
 bool ecs_progress(
     ecs_world_t *world,
     FLECS_FLOAT delta_time);   
-
-/** Set target frames per second (FPS) for application.
- * Setting the target FPS ensures that ecs_progress is not invoked faster than
- * the specified FPS. When enabled, ecs_progress tracks the time passed since
- * the last invocation, and sleeps the remaining time of the frame (if any).
- *
- * This feature ensures systems are ran at a consistent interval, as well as
- * conserving CPU time by not running systems more often than required.
- *
- * Note that ecs_progress only sleeps if there is time left in the frame. Both
- * time spent in flecs as time spent outside of flecs are taken into
- * account.
- *
- * @param world The world.
- * @param fps The target FPS.
- */
-FLECS_API
-void ecs_set_target_fps(
-    ecs_world_t *world,
-    FLECS_FLOAT fps);
 
 /** Set time scale.
  * Increase or decrease simulation speed by the provided multiplier.
@@ -141,17 +135,6 @@ FLECS_API
 void ecs_set_threads(
     ecs_world_t *world,
     int32_t threads);
-
-/** Get current number of threads. */
-FLECS_API
-int32_t ecs_get_threads(
-    ecs_world_t *world);
-
-/** Get current thread index */
-FLECS_API
-int32_t ecs_get_thread_index(
-    ecs_world_t *world);
-
 
 ////////////////////////////////////////////////////////////////////////////////
 //// Module

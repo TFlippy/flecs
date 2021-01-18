@@ -1,6 +1,20 @@
-#ifdef FLECS_STATS
+/**
+ * @file timer.h
+ * @brief Timer module.
+ *
+ * Timers can be used to trigger actions at periodic or one-shot intervals. They
+ * are typically used together with systems and pipelines.
+ */
+
+#ifdef FLECS_TIMER
+
+#ifndef FLECS_MODULE
 #define FLECS_MODULE
+#endif
+
+#ifndef FLECS_PIPELINE
 #define FLECS_PIPELINE
+#endif
 
 #ifndef FLECS_TIMER_H
 #define FLECS_TIMER_H

@@ -419,6 +419,7 @@ void Set_get_mut_tag_existing_w_comp(void);
 void Set_get_mut_tag_new_w_trait(void);
 void Set_get_mut_tag_existing_w_trait(void);
 void Set_modified_w_on_set(void);
+void Set_modified_no_component(void);
 
 // Testsuite 'Lookup'
 void Lookup_setup(void);
@@ -980,6 +981,7 @@ void Prefab_instantiate_empty_child_table(void);
 void Prefab_instantiate_emptied_child_table(void);
 void Prefab_override_2_prefabs(void);
 void Prefab_rematch_after_add_instanceof_to_parent(void);
+void Prefab_child_of_instance(void);
 
 // Testsuite 'System_w_FromContainer'
 void System_w_FromContainer_setup(void);
@@ -1244,6 +1246,7 @@ void DeferredActions_discard_add_two(void);
 void DeferredActions_discard_remove_two(void);
 void DeferredActions_discard_child(void);
 void DeferredActions_discard_child_w_add(void);
+void DeferredActions_defer_return_value(void);
 
 // Testsuite 'SingleThreadStaging'
 void SingleThreadStaging_setup(void);
@@ -1307,6 +1310,10 @@ void SingleThreadStaging_get_mutable(void);
 void SingleThreadStaging_get_mutable_from_main(void);
 void SingleThreadStaging_get_mutable_w_add(void);
 void SingleThreadStaging_on_add_after_new_type_in_progress(void);
+void SingleThreadStaging_new_type_from_entity(void);
+void SingleThreadStaging_existing_type_from_entity(void);
+void SingleThreadStaging_new_type_add(void);
+void SingleThreadStaging_existing_type_add(void);
 
 // Testsuite 'MultiThreadStaging'
 void MultiThreadStaging_setup(void);
@@ -3006,6 +3013,10 @@ bake_test_case Set_testcases[] = {
     {
         "modified_w_on_set",
         Set_modified_w_on_set
+    },
+    {
+        "modified_no_component",
+        Set_modified_no_component
     }
 };
 
@@ -5113,6 +5124,10 @@ bake_test_case Prefab_testcases[] = {
     {
         "rematch_after_add_instanceof_to_parent",
         Prefab_rematch_after_add_instanceof_to_parent
+    },
+    {
+        "child_of_instance",
+        Prefab_child_of_instance
     }
 };
 
@@ -6104,6 +6119,10 @@ bake_test_case DeferredActions_testcases[] = {
     {
         "discard_child_w_add",
         DeferredActions_discard_child_w_add
+    },
+    {
+        "defer_return_value",
+        DeferredActions_defer_return_value
     }
 };
 
@@ -6347,6 +6366,22 @@ bake_test_case SingleThreadStaging_testcases[] = {
     {
         "on_add_after_new_type_in_progress",
         SingleThreadStaging_on_add_after_new_type_in_progress
+    },
+    {
+        "new_type_from_entity",
+        SingleThreadStaging_new_type_from_entity
+    },
+    {
+        "existing_type_from_entity",
+        SingleThreadStaging_existing_type_from_entity
+    },
+    {
+        "new_type_add",
+        SingleThreadStaging_new_type_add
+    },
+    {
+        "existing_type_add",
+        SingleThreadStaging_existing_type_add
     }
 };
 
@@ -7077,7 +7112,7 @@ static bake_test_suite suites[] = {
         "Set",
         NULL,
         NULL,
-        22,
+        23,
         Set_testcases
     },
     {
@@ -7224,7 +7259,7 @@ static bake_test_suite suites[] = {
         "Prefab",
         Prefab_setup,
         NULL,
-        73,
+        74,
         Prefab_testcases
     },
     {
@@ -7287,14 +7322,14 @@ static bake_test_suite suites[] = {
         "DeferredActions",
         NULL,
         NULL,
-        32,
+        33,
         DeferredActions_testcases
     },
     {
         "SingleThreadStaging",
         SingleThreadStaging_setup,
         NULL,
-        60,
+        64,
         SingleThreadStaging_testcases
     },
     {

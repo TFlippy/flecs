@@ -1739,6 +1739,8 @@ void activate_table(
     ecs_table_t *table,
     bool active)
 {
+    (void)world;
+    
     ecs_vector_t *src_array, *dst_array;
     int32_t activated = 0;
 
@@ -1795,8 +1797,6 @@ void activate_table(
                     ecs_system_activate(world, query->system, false, NULL);
                 }
             }
-#else
-            (void)src_count;
 #endif
         }
 

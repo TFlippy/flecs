@@ -131,6 +131,9 @@ bool ecs_get_info(
     ecs_entity_info_t * info)
 {
     info->table = NULL;
+    info->record = NULL;
+    info->data = NULL;
+    info->is_watched = false;
 
     if (entity & ECS_ROLE) {
         return false;
@@ -139,8 +142,6 @@ bool ecs_get_info(
     ecs_record_t *record = ecs_eis_get(world, entity);
 
     if (!record) {
-        info->is_watched = false;
-        info->record = NULL;
         return false;
     }
 
@@ -297,16 +298,35 @@ void run_set_systems_for_entities(
     ecs_entity_t * entities,
     bool set_all)
 {   
-    /* Run OnSet systems */
     if (set_all) {
+        /* Run OnSet systems for all components of the entity. This usually
+         * happens when an entity is created directly in its target table. */
         ecs_vector_t *queries = table->on_set_all;
         ecs_vector_each(queries, ecs_matched_query_t, m, {
             ecs_run_monitor(world, m, components, row, count, entities);
         });
     } else {
+        /* Run OnSet systems for a specific component. This usually happens when
+         * an application calls ecs_set or ecs_modified. The entity's table
+         * stores a vector for each component with the OnSet systems for that
+         * component. This vector maintains the same order as the table's type,
+         * which makes finding the correct set of systems as simple as getting
+         * the index of a component id in the table type. 
+         *
+         * One thing to note is that the system may be invoked for a table that
+         * is not the same as the entity for which the system is invoked. This
+         * can happen in the case of instancing, where adding an INSTANCEOF
+         * relationship conceptually adds components to an entity, but the 
+         * actual components are stored on the base entity. */
         ecs_vector_t **on_set_systems = table->on_set;
         if (on_set_systems) {
             int32_t index = ecs_type_index_of(table->type, components->array[0]);
+            
+            /* This should never happen, as an OnSet system should only ever be
+             * invoked for entities that have the component for which this
+             * function was invoked. */
+            ecs_assert(index != -1, ECS_INTERNAL_ERROR, NULL);
+
             ecs_vector_t *queries = on_set_systems[index];
             ecs_vector_each(queries, ecs_matched_query_t, m, {
                 ecs_run_monitor(world, m, components, row, count, entities);
@@ -325,6 +345,14 @@ void ecs_run_set_systems(
     int32_t count,
     bool set_all)
 {
+    (void)world;
+    (void)components;
+    (void)table;
+    (void)data;
+    (void)row;
+    (void)count;
+    (void)set_all;
+
 #ifdef FLECS_SYSTEM    
     if (!count || !data) {
         return;
@@ -350,6 +378,13 @@ void ecs_run_monitors(
     int32_t count, 
     ecs_vector_t *v_src_monitors)
 {
+    (void)world;
+    (void)dst_table;
+    (void)v_dst_monitors;
+    (void)dst_row;
+    (void)count;
+    (void)v_src_monitors;
+
 #ifdef FLECS_SYSTEM    
     if (v_dst_monitors == v_src_monitors) {
         return;
@@ -502,14 +537,27 @@ void instantiate_children(
     int32_t child_count = ecs_vector_count(child_data->entities);
 
     for (i = row; i < count + row; i ++) {
-        ecs_entity_t e = entities[i];
+        ecs_entity_t instance = entities[i];
 
         /* Replace CHILDOF element in the component array with instance id */
-        components.array[base_index] = ECS_CHILDOF | e;
+        components.array[base_index] = ECS_CHILDOF | instance;
 
         /* Find or create table */
         ecs_table_t *i_table = ecs_table_find_or_create(world, &components);
         ecs_assert(i_table != NULL, ECS_INTERNAL_ERROR, NULL); 
+
+        /* The instance is trying to instantiate from a base that is also
+         * its parent. This would cause the hierarchy to instantiate itself
+         * which would cause infinite recursion. */
+        int j;
+        ecs_entity_t *children = ecs_vector_first(
+            child_data->entities, ecs_entity_t);
+#ifndef NDEBUG
+        for (j = 0; j < child_count; j ++) {
+            ecs_entity_t child = children[j];        
+            ecs_assert(child != instance, ECS_INVALID_PARAMETER, NULL);
+        }
+#endif
 
         /* Create children */
         int32_t child_row; 
@@ -517,9 +565,6 @@ void instantiate_children(
 
         /* If prefab child table has children itself, recursively instantiate */
         ecs_data_t *i_data = ecs_table_get_data(i_table);
-        ecs_entity_t *children = ecs_vector_first(child_data->entities, ecs_entity_t);
-
-        int j;
         for (j = 0; j < child_count; j ++) {
             ecs_entity_t child = children[j];
             instantiate(world, child, i_table, i_data, child_row + j, 1);
@@ -2086,6 +2131,13 @@ void ecs_modified_w_entity(
         return;
     }
 
+    /* If the entity does not have the component, calling ecs_modified is 
+     * invalid. The assert needs to happen after the defer statement, as the
+     * entity may not have the component when this function is called while
+     * operations are being deferred. */
+    ecs_assert(ecs_has_entity(world, entity, component), 
+        ECS_INVALID_PARAMETER, NULL);
+
     ecs_entity_info_t info = {0};
     if (ecs_get_info(world, entity, &info)) {
         ecs_entities_t added = {
@@ -2490,27 +2542,27 @@ int32_t ecs_count_w_filter(
     return result;
 }
 
-void ecs_defer_begin(
+bool ecs_defer_begin(
     ecs_world_t *world)
 {
     ecs_stage_t *stage = ecs_get_stage(&world);
     
     if (world->in_progress) {
-        ecs_stage_defer_begin(world, stage);
+        return ecs_stage_defer_begin(world, stage);
     } else {
-        ecs_defer_none(world, stage);
+        return ecs_defer_none(world, stage);
     }
 }
 
-void ecs_defer_end(
+bool ecs_defer_end(
     ecs_world_t *world)
 {
     ecs_stage_t *stage = ecs_get_stage(&world);
     
     if (world->in_progress) {
-        ecs_stage_defer_end(world, stage);
+        return ecs_stage_defer_end(world, stage);
     } else {
-        ecs_defer_flush(world, stage);
+        return ecs_defer_flush(world, stage);
     }
 }
 
@@ -2696,7 +2748,7 @@ bool valid_components(
 }
 
 /* Leave safe section. Run all deferred commands. */
-void ecs_defer_flush(
+bool ecs_defer_flush(
     ecs_world_t * world,
     ecs_stage_t * stage)
 {
@@ -2798,5 +2850,9 @@ void ecs_defer_flush(
                 ecs_vector_free(defer_queue);
             }
         }
+
+        return true;
     }
+
+    return false;
 }

@@ -458,7 +458,8 @@
                 "get_mut_tag_existing_w_comp",
                 "get_mut_tag_new_w_trait",
                 "get_mut_tag_existing_w_trait",
-                "modified_w_on_set"
+                "modified_w_on_set",
+                "modified_no_component"
             ]
         }, {
             "id": "Lookup",
@@ -1061,7 +1062,8 @@
                 "instantiate_empty_child_table",
                 "instantiate_emptied_child_table",
                 "override_2_prefabs",
-                "rematch_after_add_instanceof_to_parent"
+                "rematch_after_add_instanceof_to_parent",
+                "child_of_instance"
             ]
         }, {
             "id": "System_w_FromContainer",
@@ -1343,7 +1345,8 @@
                 "discard_add_two",
                 "discard_remove_two",
                 "discard_child",
-                "discard_child_w_add"
+                "discard_child_w_add",
+                "defer_return_value"
             ]
         }, {
             "id": "SingleThreadStaging",
@@ -1408,7 +1411,11 @@
                 "get_mutable",
                 "get_mutable_from_main",
                 "get_mutable_w_add",
-                "on_add_after_new_type_in_progress"
+                "on_add_after_new_type_in_progress",
+                "new_type_from_entity",
+                "existing_type_from_entity",
+                "new_type_add",
+                "existing_type_add"
             ]
         }, {
             "id": "MultiThreadStaging",

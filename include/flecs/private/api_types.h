@@ -1,8 +1,8 @@
 /**
- * @file api_defines.h
+ * @file api_types.h
  * @brief Supporting types for the public API.
  *
- * This file containstypes that are typically not used by an application but 
+ * This file contains types that are typically not used by an application but 
  * support the public API, and therefore must be exposed. This header should not
  * be included by itself.
  */
@@ -152,7 +152,6 @@ struct ecs_iter_t {
     FLECS_FLOAT world_time;       /**< Time elapsed since start of simulation */
 
     int32_t frame_offset;         /**< Offset relative to frame */
-    int32_t table_offset;         /**< Current active table being processed */
     int32_t offset;               /**< Offset relative to current table */
     int32_t count;                /**< Number of entities to process by system */
     int32_t total_count;          /**< Total number of entities in table */

@@ -445,9 +445,9 @@ const char *name = ecs_get_name(world, e);
 ### Id recycling
 Entity identifiers are reused when deleted. The `ecs_new` operation will first attempt to recycle a deleted identifier before producing a new one. If no identifier can be recycled, it will return the last issued identifier + 1. 
 
-Entity identifiers can only be recycled if they have been deleted with `ecs_delete`. Repeatedly calling `ecs_delete` with `ecs_new` will cause unbounded memory growth, as the framework stores a list of entity identifiers that can be recycled. An application should never delete an identifier that has not been returned by `ecs_new`, and never delete the returned identifier more than once.
+Entity identifiers can only be recycled if they have been deleted with `ecs_delete`. When `ecs_delete` is invoked, the generation count of the entity is increased. The generation is encoded in the entity identifier, which means that any existing entity identifiers with the old generation encoded in it will be considered not alive. Calling a delete multiple times on an entity that is not alive has no effect.
 
-When using multiple threads, the `ecs_new` operation guarantees that the returned identifiers are unique, by using atomic increments instead of a simple increment operation. Ids will not be recycled when using multiple threads, since this would require locking global administration.
+When using multiple threads, the `ecs_new` operation guarantees that the returned identifiers are unique, by using atomic increments instead of a simple increment operation. New ids generated from a thread will not be recycled ids, since this would require taking a lock on the administration. While this does not representa memory leak, it could cause ids to rise over time. If this happens and is an issue, an application should precreate the ids.
 
 ### Generations
 When an entity is deleted, the generation count for that entity id is increased. The entity generation count enables an application to test whether an entity is still alive or whether it has been deleted, even after the id has been recycled. Consider:
@@ -1072,6 +1072,7 @@ SHARED   | Match only shared components
 ANY      | Match owned or shared components
 PARENT   | Match component from parent
 CASCADE  | Match component from parent, iterate breadth-first
+SYSTEM   | Match component added to system
 Entity   | Get component directly from a named entity
 $        | Match singleton component
 Nothing  | Do not get the component from an entity, just pass in handle
@@ -1217,6 +1218,38 @@ while (ecs_query_next(&it)) {
 ```
 
 The `CASCADE` modifier is useful for systems that need a certain parent component to be written before the child component is written, which is the case when, for example, transforming from local coordinates to world coordinates.
+
+#### SYSTEM
+The `SYSTEM` modifier automatically adds a component to the system that can be retrieved from the system, and is an easy way to pass data to a system. It can be used like this in a signature:
+
+```
+SYSTEM:MySystemContext
+```
+
+This adds the `MySystemContext` component to the system. An application can get/set this component by using regular ECS operations:
+
+```c
+typedef struct {
+  int value;
+} MySystemContext;
+
+ECS_SYSTEM(world, MySystem, EcsOnUpdate, Position, SYSTEM:MySystemContext);
+
+ecs_set(world, MySystem, MySystemContext, { .value = 10 });
+```
+
+When iterating the system, the component can be retrieved just like other components:
+
+```c
+void MySystem(ecs_iter_t *it) {
+   Position *p = ecs_column(it, Position, 1);
+   MySystemContext *ctx = ecs_column(it, MySystemContext, 2);
+   
+   for (int i = 0; i < it.count; i ++) {
+     p[i].x += ctx->value; // Note that this is a pointer, not an array
+   }
+}
+```
 
 #### Entity
 A query can request a component from a named entity directly as is shown in the following example:

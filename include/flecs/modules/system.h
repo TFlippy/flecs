@@ -1,5 +1,17 @@
+/**
+ * @file system.h
+ * @brief System module.
+ *
+ * The system module allows for creating and running systems. A system is a
+ * query in combination with a callback function. In addition systems have
+ * support for time management and can be monitored by the stats addon.
+ */
+
 #ifdef FLECS_SYSTEM
+
+#ifndef FLECS_MODULE
 #define FLECS_MODULE
+#endif
 
 #include "../addons/module.h"
 

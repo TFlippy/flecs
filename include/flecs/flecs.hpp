@@ -1,6 +1,11 @@
-#pragma once
+/**
+ * @file flecs.hpp
+ * @brief Flecs C++ API.
+ *
+ * This is a C++11 wrapper around the Flecs C API.
+ */
 
-/* Unstable API */
+#pragma once
 
 #include <string>
 #include <sstream>
@@ -751,8 +756,8 @@ public:
      *
      * This operation is thread safe.
      */
-    void defer_begin() {
-        ecs_defer_begin(m_world);
+    bool defer_begin() {
+        return ecs_defer_begin(m_world);
     }
 
     /** End block of operations to defer. 
@@ -760,8 +765,8 @@ public:
      *
      * This operation is thread safe.
      */
-    void defer_end() {
-        ecs_defer_end(m_world);
+    bool defer_end() {
+        return ecs_defer_end(m_world);
     }
 
     /** Set number of threads.
@@ -957,6 +962,18 @@ public:
      */
     template <typename T>
     void remove() const;
+
+    /** Get id for type.
+     */
+    template <typename T>
+    entity_t type_id() {
+        return _::component_info<T>::id(m_world);
+    }
+
+    /** Get singleton entity for type.
+     */
+    template <typename T>
+    flecs::entity singleton();
 
     /** Create alias for component.
      *
@@ -2806,12 +2823,12 @@ public:
     }
 
     type(const flecs::world& world, type_t t)
-        : entity( world )
+        : entity( world.c_ptr(), 0 )
         , m_type( t )
         , m_normalized( t ) { }
 
     type(world_t *world, type_t t)
-        : entity( world )
+        : entity( world, 0 )
         , m_type( t )
         , m_normalized( t ) { }
 
@@ -2931,10 +2948,12 @@ public:
     }
 
     void enable() const {
+        ecs_assert(m_id != 0, ECS_INVALID_OPERATION, NULL);
         ecs_enable(m_world, m_id, true);
     }
 
     void disable() const {
+        ecs_assert(m_id != 0, ECS_INVALID_OPERATION, NULL);
         ecs_enable(m_world, m_id, false);
     }
 
@@ -2944,6 +2963,7 @@ public:
 
 private:
     void sync_from_me() {
+        ecs_assert(m_id != 0, ECS_INVALID_OPERATION, NULL);
         EcsType *tc = ecs_get_mut(m_world, m_id, EcsType, NULL);
         if (tc) {
             tc->type = m_type;
@@ -2952,6 +2972,7 @@ private:
     }
 
     void sync_from_flecs() {
+        ecs_assert(m_id != 0, ECS_INVALID_OPERATION, NULL);
         EcsType *tc = ecs_get_mut(m_world, m_id, EcsType, NULL);
         if (tc) {
             m_type = tc->type;
@@ -5158,6 +5179,11 @@ template <typename T>
 void world::remove() const {
     flecs::entity e(m_world, _::component_info<T>::id(m_world));
     e.remove<T>();
+}
+
+template <typename T>
+flecs::entity world::singleton() {
+    return flecs::entity(m_world, _::component_info<T>::id(m_world));
 }
 
 template <typename... Args>

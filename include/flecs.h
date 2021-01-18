@@ -1,3 +1,9 @@
+/**
+ * @file flecs.h
+ * @brief Flecs public API.
+ *
+ * This file contains the public API for Flecs.
+ */
 
 #ifndef FLECS_H
 #define FLECS_H
@@ -11,6 +17,7 @@
 /* FLECS_CUSTOM_BUILD should be defined when manually selecting features */
 // #define FLECS_CUSTOM_BUILD
 
+/* If this is a regular, non-custom build, build all modules and addons. */
 #ifndef FLECS_CUSTOM_BUILD
 /* Modules */
 #define FLECS_SYSTEM
@@ -821,6 +828,66 @@ void ecs_end_wait(
 FLECS_API
 void ecs_tracing_enable(
     int level);
+
+/** Measure frame time. 
+ * Frame time measurements measure the total time passed in a single frame, and 
+ * how much of that time was spent on systems and on merging.
+ *
+ * Frame time measurements add a small constant-time overhead to an application.
+ * When an application sets a target FPS, frame time measurements are enabled by
+ * default.
+ *
+ * @param world The world.
+ * @param enable Whether to enable or disable frame time measuring.
+ */
+FLECS_API void ecs_measure_frame_time(
+    ecs_world_t *world,
+    bool enable);
+
+/** Measure system time. 
+ * System time measurements measure the time spent in each system.
+ *
+ * System time measurements add overhead to every system invocation and 
+ * therefore have a small but measurable impact on application performance.
+ * System time measurements must be enabled before obtaining system statistics.
+ *
+ * @param world The world.
+ * @param enable Whether to enable or disable system time measuring.
+ */
+FLECS_API void ecs_measure_system_time(
+    ecs_world_t *world,
+    bool enable);   
+
+/** Set target frames per second (FPS) for application.
+ * Setting the target FPS ensures that ecs_progress is not invoked faster than
+ * the specified FPS. When enabled, ecs_progress tracks the time passed since
+ * the last invocation, and sleeps the remaining time of the frame (if any).
+ *
+ * This feature ensures systems are ran at a consistent interval, as well as
+ * conserving CPU time by not running systems more often than required.
+ *
+ * Note that ecs_progress only sleeps if there is time left in the frame. Both
+ * time spent in flecs as time spent outside of flecs are taken into
+ * account.
+ *
+ * @param world The world.
+ * @param fps The target FPS.
+ */
+FLECS_API
+void ecs_set_target_fps(
+    ecs_world_t *world,
+    FLECS_FLOAT fps);     
+
+/** Get current number of threads. */
+FLECS_API
+int32_t ecs_get_threads(
+    ecs_world_t *world);
+
+/** Get current thread index */
+FLECS_API
+int32_t ecs_get_thread_index(
+    ecs_world_t *world);
+
 
 /** @} */
 
@@ -2752,18 +2819,24 @@ void ecs_merge(
  * defer_begin and defer_end operations are executed at the end of the frame.
  *
  * This operation is thread safe.
+ * 
+ * @param world The world.
+ * @return true if world changed from non-deferred mode to deferred mode.
  */
 FLECS_API
-void ecs_defer_begin(
+bool ecs_defer_begin(
     ecs_world_t *world);
 
 /** End block of operations to defer. 
  * See defer_begin.
  *
  * This operation is thread safe.
+ *
+ * @param world The world.
+ * @return true if world changed from deferred mode to non-deferred mode.
  */
 FLECS_API
-void ecs_defer_end(
+bool ecs_defer_end(
     ecs_world_t *world);
 
 /** Enable / disable automerging.
@@ -2777,6 +2850,92 @@ FLECS_API
 void ecs_set_automerge(
     ecs_world_t *world,
     bool auto_merge);
+
+/** @} */
+
+
+/**
+ * @defgroup table_functions Public table operations
+ * @{
+ */
+
+/** Find or create table with specified component string. 
+ * The provided string must be a comma-separated list of fully qualified 
+ * component identifiers. The returned table will have the specified components.
+ * Two lists that are the same but specify components in a different order will
+ * return the same table.
+ *
+ * @param world The world.
+ * @param type The components.
+ * @return The new or existing table, or NULL if the string contains an error.
+ */
+FLECS_API
+ecs_table_t* ecs_table_from_str(
+    ecs_world_t *world,
+    const char *type);
+
+/** Find or create table from type.
+ * Same as ecs_table_from_str, but provides the type directly.
+ *
+ * @param world The world.
+ * @param type The type.
+ * @return The new or existing table.
+ */
+FLECS_API
+ecs_table_t* ecs_table_from_type(
+    ecs_world_t *world,
+    ecs_type_t type);
+
+/** Get type for table.
+ *
+ * @param table The table.
+ * @return The type of the table.
+ */
+FLECS_API
+ecs_type_t ecs_table_get_type(
+    ecs_table_t *table);
+
+/** Insert record into table.
+ * This will create a new record for the table, which inserts a value for each
+ * component. An optional entity and record can be provided.
+ *
+ * If a non-zero entity id is provided, a record must also be provided and vice
+ * versa. The record must be created by the entity index. If the provided record 
+ * is not created for the specified entity, the behavior will be undefined.
+ *
+ * If the provided record is not managed by the entity index, the behavior will
+ * be undefined.
+ *
+ * The returned record contains a reference to the table and the table row. The
+ * data pointed to by the record is guaranteed not to move unless one or more
+ * rows are removed from this table. A row can be removed as result of a delete,
+ * or by adding/removing components from an entity stored in the table.
+ *
+ * @param world The world.
+ * @param table The table.
+ * @param entity The entity.
+ * @param record The entity-index record for the specified entity.
+ * @return A record containing the table and table row.
+ */
+FLECS_API
+ecs_record_t ecs_table_insert(
+    ecs_world_t *world,
+    ecs_table_t *table,
+    ecs_entity_t entity,
+    ecs_record_t *record);
+
+/** Returns the number of records in the table. 
+ * This operation returns the number of records that have been populated through
+ * the regular (entity) API as well as the number of records that have been
+ * inserted using the direct access API.
+ *
+ * @param world The world.
+ * @param table The table.
+ * @return The number of records in a table.
+ */
+FLECS_API
+int32_t ecs_table_count(
+    ecs_table_t *table);
 
 /** @} */
 
@@ -2810,9 +2969,7 @@ void ecs_set_automerge(
 #ifdef FLECS_SNAPSHOT
 #include "flecs/addons/snapshot.h"
 #endif
-#ifdef FLECS_DIRECT_ACCESS
 #include "flecs/addons/direct_access.h"
-#endif
 #ifdef FLECS_STATS
 #include "flecs/addons/stats.h"
 #endif

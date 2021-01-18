@@ -1,6 +1,5 @@
 ![flecs](https://user-images.githubusercontent.com/9919222/104115165-0a4e4700-52c1-11eb-85d6-9bdfa9a0265f.png)
 
-[![GitHub version](https://badge.fury.io/gh/sandermertens%2Fflecs.svg)](https://badge.fury.io/gh/sandermertens%2Fflecs)
 [![CI build](https://github.com/SanderMertens/flecs/workflows/CI/badge.svg)](https://github.com/SanderMertens/flecs/actions)
 [![codecov](https://codecov.io/gh/SanderMertens/flecs/branch/master/graph/badge.svg)](https://codecov.io/gh/SanderMertens/flecs)
 [![Discord Chat](https://img.shields.io/discord/633826290415435777.svg)](https://discord.gg/BEzP5Rgrrp)
@@ -130,6 +129,13 @@ The code is validated on the following platforms/compilers:
 The framework code and example code is compiled warning free on all platforms with the strictest warning settings. A sanitized build is ran on each commit to test for memory corruption and undefined behavior.
 
 Performance is tracked on a per-release basis, with the results for the latest release published here: https://github.com/SanderMertens/ecs_benchmark
+
+### API stability
+API stability is guaranteed between minor releases, except in the rare case when an API is found to be an obvious source of confusion or bugs. ABI stability is not guaranteed inbetween versions. When breaking changes do happen, the release notes will mention it with potential workarounds.
+
+Types and function signatures may change as long as they do not require changes in the application code, which is why applications should rebuild after upgrading to a new revision. Headers under include/private are not part of the public API, and may introduce breaking changes at any point.
+
+It is generally safe to use the master branch, which contains the latest version of the code. New features that are on master but are not yet part of a release may still see changes in their API. Once a feature is part of a release, its API will not change until at least the next major release.
 
 ## Modules
 The following modules are available in [flecs-hub](https://github.com/flecs-hub). Note that modules are mostly intended as example code, and their APIs may change at any point in time.
