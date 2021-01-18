@@ -969,7 +969,7 @@ int32_t move_entity(
             /* If entity was moved, invoke UnSet monitors for each component that
              * the entity no longer has */
             ecs_run_monitors(world, dst_table, src_table->un_set_all, 
-                dst_row, 1, dst_table->un_set_all);
+                src_row, 1, dst_table->un_set_all);
 
             ecs_run_remove_actions(
                 world, src_table, src_data, src_row, 1, removed, false);
