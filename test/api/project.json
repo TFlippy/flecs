@@ -861,6 +861,21 @@
                 "on_set_prefab"
             ]
         }, {
+            "id": "SystemUnSet",
+            "testcases": [
+                "unset_1_of_1",
+                "unset_1_of_2",
+                "unset_1_of_3",
+                "unset_on_delete_1",
+                "unset_on_delete_2",
+                "unset_on_delete_3",
+                "unset_on_fini_1",
+                "unset_on_fini_2",
+                "unset_on_fini_3",
+                "overlapping_unset_systems",
+                "unset_move_to_nonempty_table"
+            ]
+        }, {
             "id": "SystemPeriodic",
             "testcases": [
                 "1_type_1_component",
@@ -1317,6 +1332,7 @@
                 "defer_new",
                 "defer_bulk_new",
                 "defer_bulk_new_w_data",
+                "defer_bulk_new_w_data_trait",
                 "defer_bulk_new_two",
                 "defer_bulk_new_w_data_two",
                 "defer_add",
@@ -1346,7 +1362,8 @@
                 "discard_remove_two",
                 "discard_child",
                 "discard_child_w_add",
-                "defer_return_value"
+                "defer_return_value",
+                "defer_get_mut_trait"
             ]
         }, {
             "id": "SingleThreadStaging",

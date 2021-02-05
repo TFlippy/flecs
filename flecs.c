@@ -2102,6 +2102,7 @@ void register_un_set(
     int32_t matched_table_index)
 {
     (void)world;
+    table->flags |= EcsTableHasUnSet;
     add_monitor(&table->un_set_all, query, matched_table_index);
 }
 
@@ -4211,7 +4212,6 @@ void ecs_run_monitors(
     }
 
     ecs_assert(!(dst_table->flags & EcsTableIsPrefab), ECS_INTERNAL_ERROR, NULL);
-    (void)dst_table;
     
     if (!v_src_monitors) {
         ecs_vector_each(v_dst_monitors, ecs_matched_query_t, monitor, {
@@ -4241,7 +4241,7 @@ void ecs_run_monitors(
                 }
             }
 
-            if (src->query->system == system) {
+            if (src && src->query->system == system) {
                 continue;
             }
 
@@ -4830,7 +4830,7 @@ int32_t move_entity(
             /* If entity was moved, invoke UnSet monitors for each component that
              * the entity no longer has */
             ecs_run_monitors(world, dst_table, src_table->un_set_all, 
-                dst_row, 1, dst_table->un_set_all);
+                src_row, 1, dst_table->un_set_all);
 
             ecs_run_remove_actions(
                 world, src_table, src_data, src_row, 1, removed, false);
@@ -6469,7 +6469,7 @@ void flush_bulk_new(
         int c, c_count = op->components.count;
         for (c = 0; c < c_count; c ++) {
             ecs_entity_t component = components[c];
-            const EcsComponent *cptr = ecs_get(world, component, EcsComponent);
+            const EcsComponent *cptr = ecs_component_from_id(world, component);
             ecs_assert(cptr != NULL, ECS_INTERNAL_ERROR, NULL);
             size_t size = ecs_to_size_t(cptr->size);
             void *ptr, *data = bulk_data[c];
@@ -6844,7 +6844,7 @@ bool ecs_defer_bulk_new(
             defer_data = ecs_os_malloc(ECS_SIZEOF(void*) * c_count);
             for (c = 0; c < c_count; c ++) {
                 ecs_entity_t comp = components[c];
-                const EcsComponent *cptr = ecs_get(world, comp, EcsComponent);
+                const EcsComponent *cptr = ecs_component_from_id(world, comp);
                 ecs_assert(cptr != NULL, ECS_INVALID_PARAMETER, NULL);
 
                 ecs_size_t size = cptr->size;
@@ -6931,7 +6931,7 @@ bool ecs_defer_set(
     if (stage->defer) {
         world->set_count ++;
         if (!size) {
-            const EcsComponent *cptr = ecs_get(world, component, EcsComponent);
+            const EcsComponent *cptr = ecs_component_from_id(world, component);
             ecs_assert(cptr != NULL, ECS_INVALID_PARAMETER, NULL);
             size = cptr->size;
         }
@@ -9195,7 +9195,7 @@ void ecs_gauge_reduce(
         }
         if ((src->max[t] > dst->max[t_dst])) {
             dst->max[t_dst] = src->max[t];
-        }        
+        }
     }
 }
 
@@ -9219,7 +9219,12 @@ void ecs_get_world_stats(
     record_counter(&s->pipeline_build_count_total, t, world->stats.pipeline_build_count_total);
     record_counter(&s->systems_ran_frame, t, world->stats.systems_ran_frame);
 
-    record_gauge(&s->fps, t, 1.0f / (delta_world_time / (float)delta_frame_count));
+    if (delta_world_time != 0.0 && delta_frame_count != 0.0) {
+        record_gauge(
+            &s->fps, t, 1.0f / (delta_world_time / (float)delta_frame_count));
+    } else {
+        record_gauge(&s->fps, t, 0);
+    }
 
     record_gauge(&s->entity_count, t, ecs_sparse_count(world->store.entity_index));
     record_gauge(&s->component_count, t, ecs_count_entity(world, ecs_typeid(EcsComponent)));

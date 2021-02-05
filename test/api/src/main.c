@@ -792,6 +792,19 @@ void SystemOnSet_add_null_type_in_on_set(void);
 void SystemOnSet_add_0_entity_in_on_set(void);
 void SystemOnSet_on_set_prefab(void);
 
+// Testsuite 'SystemUnSet'
+void SystemUnSet_unset_1_of_1(void);
+void SystemUnSet_unset_1_of_2(void);
+void SystemUnSet_unset_1_of_3(void);
+void SystemUnSet_unset_on_delete_1(void);
+void SystemUnSet_unset_on_delete_2(void);
+void SystemUnSet_unset_on_delete_3(void);
+void SystemUnSet_unset_on_fini_1(void);
+void SystemUnSet_unset_on_fini_2(void);
+void SystemUnSet_unset_on_fini_3(void);
+void SystemUnSet_overlapping_unset_systems(void);
+void SystemUnSet_unset_move_to_nonempty_table(void);
+
 // Testsuite 'SystemPeriodic'
 void SystemPeriodic_1_type_1_component(void);
 void SystemPeriodic_1_type_3_component(void);
@@ -1217,6 +1230,7 @@ void MultiThread_reactive_system(void);
 void DeferredActions_defer_new(void);
 void DeferredActions_defer_bulk_new(void);
 void DeferredActions_defer_bulk_new_w_data(void);
+void DeferredActions_defer_bulk_new_w_data_trait(void);
 void DeferredActions_defer_bulk_new_two(void);
 void DeferredActions_defer_bulk_new_w_data_two(void);
 void DeferredActions_defer_add(void);
@@ -1247,6 +1261,7 @@ void DeferredActions_discard_remove_two(void);
 void DeferredActions_discard_child(void);
 void DeferredActions_discard_child_w_add(void);
 void DeferredActions_defer_return_value(void);
+void DeferredActions_defer_get_mut_trait(void);
 
 // Testsuite 'SingleThreadStaging'
 void SingleThreadStaging_setup(void);
@@ -4414,6 +4429,53 @@ bake_test_case SystemOnSet_testcases[] = {
     }
 };
 
+bake_test_case SystemUnSet_testcases[] = {
+    {
+        "unset_1_of_1",
+        SystemUnSet_unset_1_of_1
+    },
+    {
+        "unset_1_of_2",
+        SystemUnSet_unset_1_of_2
+    },
+    {
+        "unset_1_of_3",
+        SystemUnSet_unset_1_of_3
+    },
+    {
+        "unset_on_delete_1",
+        SystemUnSet_unset_on_delete_1
+    },
+    {
+        "unset_on_delete_2",
+        SystemUnSet_unset_on_delete_2
+    },
+    {
+        "unset_on_delete_3",
+        SystemUnSet_unset_on_delete_3
+    },
+    {
+        "unset_on_fini_1",
+        SystemUnSet_unset_on_fini_1
+    },
+    {
+        "unset_on_fini_2",
+        SystemUnSet_unset_on_fini_2
+    },
+    {
+        "unset_on_fini_3",
+        SystemUnSet_unset_on_fini_3
+    },
+    {
+        "overlapping_unset_systems",
+        SystemUnSet_overlapping_unset_systems
+    },
+    {
+        "unset_move_to_nonempty_table",
+        SystemUnSet_unset_move_to_nonempty_table
+    }
+};
+
 bake_test_case SystemPeriodic_testcases[] = {
     {
         "1_type_1_component",
@@ -6005,6 +6067,10 @@ bake_test_case DeferredActions_testcases[] = {
         DeferredActions_defer_bulk_new_w_data
     },
     {
+        "defer_bulk_new_w_data_trait",
+        DeferredActions_defer_bulk_new_w_data_trait
+    },
+    {
         "defer_bulk_new_two",
         DeferredActions_defer_bulk_new_two
     },
@@ -6123,6 +6189,10 @@ bake_test_case DeferredActions_testcases[] = {
     {
         "defer_return_value",
         DeferredActions_defer_return_value
+    },
+    {
+        "defer_get_mut_trait",
+        DeferredActions_defer_get_mut_trait
     }
 };
 
@@ -7214,6 +7284,13 @@ static bake_test_suite suites[] = {
         SystemOnSet_testcases
     },
     {
+        "SystemUnSet",
+        NULL,
+        NULL,
+        11,
+        SystemUnSet_testcases
+    },
+    {
         "SystemPeriodic",
         NULL,
         NULL,
@@ -7322,7 +7399,7 @@ static bake_test_suite suites[] = {
         "DeferredActions",
         NULL,
         NULL,
-        33,
+        35,
         DeferredActions_testcases
     },
     {
@@ -7399,5 +7476,5 @@ static bake_test_suite suites[] = {
 
 int main(int argc, char *argv[]) {
     ut_init(argv[0]);
-    return bake_test_run("api", argc, argv, suites, 58);
+    return bake_test_run("api", argc, argv, suites, 59);
 }
