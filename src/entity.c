@@ -1893,10 +1893,15 @@ void ecs_delete(
     ecs_record_t *r = ecs_sparse_remove_get(
         world->store.entity_index, ecs_record_t, entity);
     if (r) {
-        ecs_entity_info_t info;
+        ecs_entity_info_t info = {0};
         set_info_from_record(entity, &info, r);
         if (info.is_watched) {
             ecs_delete_children(world, entity);
+
+            if (r->table) {
+                ecs_entities_t to_remove = ecs_type_to_entities(r->table->type);
+                update_component_monitors(world, entity, NULL, &to_remove);
+            }
         }
 
         /* If entity has components, remove them */
