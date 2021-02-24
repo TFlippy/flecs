@@ -287,6 +287,55 @@ void New_new_component_id() {
     ecs_fini(world);
 }
 
+void New_new_component_id_skip_used() {
+    ecs_world_t *world = ecs_init();
+
+    ECS_TAG(world, Foo);
+
+    ecs_entity_t e = ecs_new_component_id(world);
+    test_assert(e != 0);
+    test_assert(e < ECS_HI_COMPONENT_ID);
+    test_assert(!ecs_get_type(world, e));
+
+    /* Explicitly set an id that is one above the last issued id */
+    ecs_add_entity(world, e + 1, Foo);
+
+    ecs_entity_t e2 = ecs_new_component_id(world);
+    test_assert(e2 != 0);
+    test_assert(e2 < ECS_HI_COMPONENT_ID);
+    test_assert(!ecs_get_type(world, e2));    
+    test_assert(e2 != (e + 1));
+
+    ecs_fini(world);
+}
+
+void New_new_component_id_skip_to_hi_id() {
+    ecs_world_t *world = ecs_init();
+
+    ECS_TAG(world, Foo);
+
+    ecs_entity_t e = ecs_new_component_id(world);
+    test_assert(e != 0);
+
+    /* Use up all low component ids */
+    int i;
+    for (i = (int)e; i < ECS_HI_COMPONENT_ID; i ++) {
+        ecs_add_entity(world, i, Foo);
+    }
+
+    ecs_entity_t e2 = ecs_new_component_id(world);
+    test_assert(e2 != 0);
+    test_assert(e2 > ECS_HI_COMPONENT_ID);
+    test_assert(!ecs_get_type(world, e2));
+
+    ecs_entity_t e3 = ecs_new_id(world);
+    test_assert(e3 != e2);
+    test_assert(e3 > e2);
+    test_assert(!ecs_get_type(world, e3));
+
+    ecs_fini(world);
+}
+
 void New_new_hi_component_id() {
     ecs_world_t *world = ecs_init();
 
@@ -312,4 +361,31 @@ void New_new_w_entity_0() {
     test_assert(ecs_get_type(world, e) == NULL);
 
     ecs_fini(world);
+}
+
+ECS_ENTITY_DECLARE(Foo);
+
+void New_create_w_explicit_id_2_worlds() {
+    ecs_world_t *world_1 = ecs_init();
+    ecs_world_t *world_2 = ecs_init();
+
+    ecs_entity_t p1 = ecs_set(world_1, 0, EcsName, {"Parent"});
+    ecs_entity_t p2 = ecs_set(world_2, 0, EcsName, {"Parent"});
+
+    ecs_set_scope(world_1, p1);
+    ecs_set_scope(world_2, p2);
+
+    ECS_ENTITY_DEFINE(world_1, Foo, 0);
+    ECS_ENTITY_DEFINE(world_2, Foo, 0);
+
+    char *path = ecs_get_fullpath(world_1, Foo);
+    test_str(path, "Parent.Foo");
+    ecs_os_free(path);
+
+    path = ecs_get_fullpath(world_2, Foo);
+    test_str(path, "Parent.Foo");
+    ecs_os_free(path);
+
+    ecs_fini(world_1);
+    ecs_fini(world_2);
 }

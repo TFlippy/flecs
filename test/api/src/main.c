@@ -30,7 +30,10 @@ void New_recycle_staged_delete(void);
 void New_new_id(void);
 void New_new_component_id(void);
 void New_new_hi_component_id(void);
+void New_new_component_id_skip_used(void);
+void New_new_component_id_skip_to_hi_id(void);
 void New_new_w_entity_0(void);
+void New_create_w_explicit_id_2_worlds(void);
 
 // Testsuite 'New_w_Count'
 void New_w_Count_empty(void);
@@ -673,6 +676,7 @@ void Queries_get_column_size(void);
 void Queries_orphaned_query(void);
 void Queries_nested_orphaned_query(void);
 void Queries_invalid_access_orphaned_query(void);
+void Queries_stresstest_query_free(void);
 
 // Testsuite 'Traits'
 void Traits_type_w_one_trait(void);
@@ -1580,8 +1584,20 @@ bake_test_case New_testcases[] = {
         New_new_hi_component_id
     },
     {
+        "new_component_id_skip_used",
+        New_new_component_id_skip_used
+    },
+    {
+        "new_component_id_skip_to_hi_id",
+        New_new_component_id_skip_to_hi_id
+    },
+    {
         "new_w_entity_0",
         New_new_w_entity_0
+    },
+    {
+        "create_w_explicit_id_2_worlds",
+        New_create_w_explicit_id_2_worlds
     }
 };
 
@@ -3989,6 +4005,10 @@ bake_test_case Queries_testcases[] = {
     {
         "invalid_access_orphaned_query",
         Queries_invalid_access_orphaned_query
+    },
+    {
+        "stresstest_query_free",
+        Queries_stresstest_query_free
     }
 };
 
@@ -7068,7 +7088,7 @@ static bake_test_suite suites[] = {
         "New",
         New_setup,
         NULL,
-        21,
+        24,
         New_testcases
     },
     {
@@ -7243,7 +7263,7 @@ static bake_test_suite suites[] = {
         "Queries",
         NULL,
         NULL,
-        30,
+        31,
         Queries_testcases
     },
     {
